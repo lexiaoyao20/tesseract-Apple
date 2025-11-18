@@ -221,6 +221,7 @@ build_cmake_project() {
   cmake "${src_dir}" \
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
     -DCMAKE_INSTALL_PREFIX="${install_prefix}" \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOS_MIN_VERSION}" \
     -DCMAKE_OSX_ARCHITECTURES="${ARCH}" \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
@@ -279,6 +280,7 @@ build_cmake_project_ios() {
   cmake "${src_dir}" \
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
     -DCMAKE_INSTALL_PREFIX="${install_prefix}" \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DCMAKE_SYSTEM_NAME=iOS \
     -DCMAKE_OSX_SYSROOT="${sdk_path}" \
     -DCMAKE_SYSTEM_PROCESSOR="${arch}" \
