@@ -1,0 +1,27 @@
+# General
+.DS_Store
+*.log
+
+# IDE / Editor
+.vscode/
+.idea/
+**/xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+DerivedData/
+.swiftpm/
+.build/
+
+# Build outputs from this repo
+/build-macos-arm64/
+/build-ios/
+/tesseract-macos-arm64/
+/tesseract-ios-arm64/
+/tesseract-ios-simulator/
+/lib/Tesseract.xcframework
+
+# Demo binaries
+/demo/macos/tesseract-demo
+
+# Debug / profiling artifacts
+*.dSYM
