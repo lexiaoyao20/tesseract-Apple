@@ -22,14 +22,15 @@ jobs:
         id: latest
         run: |
           set -euo pipefail
-          # 不再调用 GitHub API，避免 API 403 或限流。
-          # 利用 /releases/latest 的 302 跳转，解析最终 URL 的最后一段作为 tag。
-          latest_url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/tesseract-ocr/tesseract/releases/latest)"
-          version="${latest_url##*/}"
+          # 避免调用 GitHub API 或网页端点导致 403，这里改用 git 协议获取 tag 列表。
+          # 通过 git ls-remote --tags 拿到所有 tag，选出数值最大的稳定版本号（仅匹配纯数字形如 5.5.1）。
+          version="$(python3 .github/scripts/get_latest_tess_version.py)"
+
           if [ -z "${version}" ]; then
-            echo "Failed to detect latest Tesseract release tag from ${latest_url}" >&2
+            echo "Failed to detect latest Tesseract version from upstream tags" >&2
             exit 1
           fi
+
           echo "Detected latest upstream Tesseract version: ${version}"
           echo "LATEST_TESS_VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -68,7 +69,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git status
-          git add build.sh Package.swift Tesseract.podspec .github/scripts/update_versions.py .github/workflows/auto-build-tesseract.yml lib/Tesseract.xcframework .gitignore
+          git add build.sh Package.swift Tesseract.podspec .github/scripts/update_versions.py .github/scripts/get_latest_tess_version.py .github/workflows/auto-build-tesseract.yml lib/Tesseract.xcframework .gitignore
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
