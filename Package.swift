@@ -1,4 +1,5 @@
 // swift-tools-version:5.7
+// Upstream Tesseract OCR version: 5.5.1
 
 import PackageDescription
 
@@ -21,4 +22,3 @@ let package = Package(
         ),
     ]
 )
-

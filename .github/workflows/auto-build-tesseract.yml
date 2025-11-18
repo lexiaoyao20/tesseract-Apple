@@ -1,0 +1,104 @@
+name: Auto build and release Tesseract
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch latest upstream Tesseract release
+        id: latest
+        run: |
+          set -euo pipefail
+          response="$(curl -fsSL https://api.github.com/repos/tesseract-ocr/tesseract/releases/latest)"
+          version="$(printf '%s' "$response" | python3 -c 'import sys, json; print(json.load(sys.stdin)["tag_name"])')"
+          echo "LATEST_TESS_VERSION=$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check if version tag already exists
+        id: check
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          if git rev-parse "${LATEST_TESS_VERSION}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update versions in build script and specs
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/update_versions.py
+        env:
+          LATEST_TESS_VERSION: ${{ env.LATEST_TESS_VERSION }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: Build Tesseract (macOS + iOS + XCFramework)
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Commit updated artifacts
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git status
+          git add build.sh Package.swift Tesseract.podspec .github/scripts/update_versions.py .github/workflows/auto-build-tesseract.yml lib/Tesseract.xcframework .gitignore
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update to Tesseract ${LATEST_TESS_VERSION}"
+            git push origin HEAD
+          fi
+
+      - name: Create git tag for new version
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          if git rev-parse "${LATEST_TESS_VERSION}" >/dev/null 2>&1; then
+            echo "Tag ${LATEST_TESS_VERSION} already exists locally, skipping tag creation."
+          else
+            git tag "${LATEST_TESS_VERSION}"
+            git push origin "${LATEST_TESS_VERSION}"
+          fi
+
+      - name: Create GitHub release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          status=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${LATEST_TESS_VERSION}" || true)
+          if [ "$status" -eq 200 ]; then
+            echo "Release ${LATEST_TESS_VERSION} already exists, skipping."
+            exit 0
+          fi
+
+          payload="$(printf '{"tag_name":"%s","name":"Tesseract %s","body":"Automated build for upstream Tesseract %s.","draft":false,"prerelease":false}' "${LATEST_TESS_VERSION}" "${LATEST_TESS_VERSION}" "${LATEST_TESS_VERSION}")"
+
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "${payload}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases"

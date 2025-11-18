@@ -18,7 +18,6 @@ DerivedData/
 /tesseract-macos-arm64/
 /tesseract-ios-arm64/
 /tesseract-ios-simulator/
-/lib/Tesseract.xcframework
 
 # Demo binaries
 /demo/macos/tesseract-demo
