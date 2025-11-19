@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write # 允许读取代码、创建 Release 以及推送 commit
 
 jobs:
   build-and-release:
@@ -18,12 +18,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 1. 获取上游最新版本号
       - name: Fetch latest upstream Tesseract release
         id: latest
         run: |
           set -euo pipefail
-          # 避免调用 GitHub API 或网页端点导致 403，这里改用 git 协议获取 tag 列表。
-          # 通过 git ls-remote --tags 拿到所有 tag，选出数值最大的稳定版本号（仅匹配纯数字形如 5.5.1）。
+          # 调用脚本获取上游最新纯数字版本号 (如 5.5.0)
           version="$(python3 .github/scripts/get_latest_tess_version.py)"
 
           if [ -z "${version}" ]; then
@@ -35,6 +35,7 @@ jobs:
           echo "LATEST_TESS_VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      # 2. 检查该版本是否已处理过
       - name: Check if version tag already exists
         id: check
         run: |
@@ -42,11 +43,19 @@ jobs:
           git fetch --tags --force
           if git rev-parse "${LATEST_TESS_VERSION}" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Version ${LATEST_TESS_VERSION} already exists. Skipping build."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Update versions in build script and specs
+      # 3. 安装编译依赖 (仅当版本不存在时运行)
+      - name: Install Build Dependencies
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          brew install automake autoconf libtool pkg-config
+
+      # 4. 第一轮更新：更新 Podspec 和 build.sh 中的版本号
+      - name: Update versions (Pre-build)
         if: steps.check.outputs.exists == 'false'
         run: |
           set -euo pipefail
@@ -55,58 +64,70 @@ jobs:
           LATEST_TESS_VERSION: ${{ env.LATEST_TESS_VERSION }}
           GITHUB_REPOSITORY: ${{ github.repository }}
 
+      # 5. 执行编译并打包产物 (不提交到 git)
       - name: Build Tesseract (macOS + iOS + XCFramework)
         if: steps.check.outputs.exists == 'false'
         run: |
           set -euo pipefail
           chmod +x build.sh
           ./build.sh
+          
+          # 检查产物是否存在
+          if [ ! -d "lib/Tesseract.xcframework" ]; then
+            echo "Error: lib/Tesseract.xcframework not found after build."
+            exit 1
+          fi
 
-      - name: Commit updated artifacts
+          # 压缩 Framework 以便上传到 Release Assets
+          echo "Zipping artifact..."
+          zip -r Tesseract.xcframework.zip lib/Tesseract.xcframework
+
+      # 6. 第二轮更新：计算 Checksum 并回写 Package.swift
+      - name: Update Package.swift checksum
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          
+          # 计算 zip 文件的 SHA256 Checksum
+          CHECKSUM=$(swift package compute-checksum Tesseract.xcframework.zip)
+          echo "Computed checksum: $CHECKSUM"
+          
+          # 调用 Python 脚本更新 Package.swift 中的 url 和 checksum
+          python3 .github/scripts/update_versions.py --checksum "$CHECKSUM"
+        env:
+          LATEST_TESS_VERSION: ${{ env.LATEST_TESS_VERSION }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      # 7. 提交配置文件更新 (不包含二进制文件)
+      - name: Commit updated config files
         if: steps.check.outputs.exists == 'false'
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git status
-          git add build.sh Package.swift Tesseract.podspec .github/scripts/update_versions.py .github/scripts/get_latest_tess_version.py .github/workflows/auto-build-tesseract.yml lib/Tesseract.xcframework .gitignore
+          
+          # ⚠️ 仅添加配置文件，绝对不要添加 .xcframework 或 .zip
+          git add build.sh Package.swift Tesseract.podspec .github/scripts/update_versions.py .github/workflows/auto-build-tesseract.yml .gitignore
+          
           if git diff --cached --quiet; then
-            echo "No changes to commit."
+            echo "No config changes to commit."
           else
             git commit -m "chore: update to Tesseract ${LATEST_TESS_VERSION}"
+            # 拉取最新代码以防冲突
+            git pull --rebase origin HEAD
             git push origin HEAD
           fi
 
-      - name: Create git tag for new version
-        if: steps.check.outputs.exists == 'false'
-        run: |
-          set -euo pipefail
-          if git rev-parse "${LATEST_TESS_VERSION}" >/dev/null 2>&1; then
-            echo "Tag ${LATEST_TESS_VERSION} already exists locally, skipping tag creation."
-          else
-            git tag "${LATEST_TESS_VERSION}"
-            git push origin "${LATEST_TESS_VERSION}"
-          fi
-
-      - name: Create GitHub release
+      # 8. 创建 GitHub Release 并上传 Zip 包
+      - name: Create GitHub Release
         if: steps.check.outputs.exists == 'false'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          status=$(curl -s -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${LATEST_TESS_VERSION}" || true)
-          if [ "$status" -eq 200 ]; then
-            echo "Release ${LATEST_TESS_VERSION} already exists, skipping."
-            exit 0
-          fi
-
-          payload="$(printf '{"tag_name":"%s","name":"Tesseract %s","body":"Automated build for upstream Tesseract %s.","draft":false,"prerelease":false}' "${LATEST_TESS_VERSION}" "${LATEST_TESS_VERSION}" "${LATEST_TESS_VERSION}")"
-
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "${payload}" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases"
+          
+          gh release create "${LATEST_TESS_VERSION}" \
+            Tesseract.xcframework.zip \
+            --title "Tesseract ${LATEST_TESS_VERSION}" \
+            --notes "Automated build for upstream Tesseract ${LATEST_TESS_VERSION}." \
+            --target "${GITHUB_SHA}"
