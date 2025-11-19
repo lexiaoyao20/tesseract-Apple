@@ -7,8 +7,7 @@ import sys
 
 def main() -> int:
     try:
-        # 修改点：增加 ["-c", "http.extraheader="] 
-        # 这可以防止 CI 环境下的 GITHUB_TOKEN 干扰对公开仓库的访问
+        # 防止 CI 环境 Token 干扰，强制使用匿名访问
         out = subprocess.check_output(
             ["git", "-c", "http.extraheader=", "ls-remote", "--tags", "https://github.com/tesseract-ocr/tesseract.git"],
             text=True,

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # 允许读取代码、创建 Release 以及推送 commit
+  contents: write
 
 jobs:
   build-and-release:
@@ -23,7 +23,7 @@ jobs:
         id: latest
         run: |
           set -euo pipefail
-          # 调用脚本获取上游最新纯数字版本号 (如 5.5.0)
+          # 脚本内已包含防止 403 的 extraheader 修复
           version="$(python3 .github/scripts/get_latest_tess_version.py)"
 
           if [ -z "${version}" ]; then
@@ -35,7 +35,8 @@ jobs:
           echo "LATEST_TESS_VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      # 2. 检查该版本是否已处理过
+      # 2. 检查该版本是否已处理过 (核心需求 1)
+      # 如果本地 git tag 中已经有了这个版本号，说明我们之前已经构建并发布过了。
       - name: Check if version tag already exists
         id: check
         run: |
@@ -43,28 +44,28 @@ jobs:
           git fetch --tags --force
           if git rev-parse "${LATEST_TESS_VERSION}" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Version ${LATEST_TESS_VERSION} already exists. Skipping build."
+            echo "Version ${LATEST_TESS_VERSION} already exists. Process will stop."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # 3. 安装编译依赖 (仅当版本不存在时运行)
+      # 3. 安装编译依赖
       - name: Install Build Dependencies
         if: steps.check.outputs.exists == 'false'
         run: |
           brew install automake autoconf libtool pkg-config
 
-      # 4. 第一轮更新：更新 Podspec 和 build.sh 中的版本号
+      # 4. 第一轮更新：更新 Podspec/build.sh/Package.swift 中的显示版本号
       - name: Update versions (Pre-build)
         if: steps.check.outputs.exists == 'false'
-        run: |
-          set -euo pipefail
-          python3 .github/scripts/update_versions.py
         env:
           LATEST_TESS_VERSION: ${{ env.LATEST_TESS_VERSION }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/update_versions.py
 
-      # 5. 执行编译并打包产物 (不提交到 git)
+      # 5. 执行编译并打包产物
       - name: Build Tesseract (macOS + iOS + XCFramework)
         if: steps.check.outputs.exists == 'false'
         run: |
@@ -72,33 +73,32 @@ jobs:
           chmod +x build.sh
           ./build.sh
           
-          # 检查产物是否存在
           if [ ! -d "lib/Tesseract.xcframework" ]; then
             echo "Error: lib/Tesseract.xcframework not found after build."
             exit 1
           fi
 
-          # 压缩 Framework 以便上传到 Release Assets
           echo "Zipping artifact..."
+          # 保持目录结构 lib/Tesseract.xcframework 以匹配 Podspec 的 vendored_frameworks 路径
           zip -r Tesseract.xcframework.zip lib/Tesseract.xcframework
 
-      # 6. 第二轮更新：计算 Checksum 并回写 Package.swift
-      - name: Update Package.swift checksum
+      # 6. 第二轮更新：计算 Checksum 并将依赖指向刚生成的 Release Zip (核心需求 2)
+      - name: Update Dependencies to Binary Release
         if: steps.check.outputs.exists == 'false'
-        run: |
-          set -euo pipefail
-          
-          # 计算 zip 文件的 SHA256 Checksum
-          CHECKSUM=$(swift package compute-checksum Tesseract.xcframework.zip)
-          echo "Computed checksum: $CHECKSUM"
-          
-          # 调用 Python 脚本更新 Package.swift 中的 url 和 checksum
-          python3 .github/scripts/update_versions.py --checksum "$CHECKSUM"
         env:
           LATEST_TESS_VERSION: ${{ env.LATEST_TESS_VERSION }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          
+          # 计算 SHA256
+          CHECKSUM=$(swift package compute-checksum Tesseract.xcframework.zip)
+          echo "Computed checksum: $CHECKSUM"
+          
+          # 调用脚本更新 Package.swift (url/checksum) 和 Podspec (http source)
+          python3 .github/scripts/update_versions.py --checksum "$CHECKSUM"
 
-      # 7. 提交配置文件更新 (不包含二进制文件)
+      # 7. 提交配置文件更新 (Package.swift, Podspec 等指向新 Release)
       - name: Commit updated config files
         if: steps.check.outputs.exists == 'false'
         run: |
@@ -106,14 +106,18 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          # ⚠️ 仅添加配置文件，绝对不要添加 .xcframework 或 .zip
-          git add build.sh Package.swift Tesseract.podspec .github/scripts/update_versions.py .github/workflows/auto-build-tesseract.yml .gitignore
+          # 仅添加配置文件，不添加二进制文件
+          git add build.sh \
+                  Package.swift \
+                  Tesseract.podspec \
+                  .github/scripts/update_versions.py \
+                  .github/workflows/auto-build-tesseract.yml \
+                  .gitignore
           
           if git diff --cached --quiet; then
             echo "No config changes to commit."
           else
-            git commit -m "chore: update to Tesseract ${LATEST_TESS_VERSION}"
-            # 拉取最新代码以防冲突
+            git commit -m "chore: update to Tesseract ${LATEST_TESS_VERSION} [skip ci]"
             git pull --rebase origin HEAD
             git push origin HEAD
           fi
