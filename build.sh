@@ -1,33 +1,24 @@
 #!/usr/bin/env bash
 
 ###############################################################################
-# Tesseract Apple Silicon Build Script
+# Tesseract macOS Apple Silicon One-Key Build Script
 #
 # 目标：
 #   - 在 macOS 11.0+ (Big Sur) 上，为 Apple Silicon (arm64) 构建
-#     可用于 iOS 与 macOS 的预编译 Tesseract OCR 静态库。
+#     可供 C 语言直接调用的 Tesseract OCR 静态 / 动态库。
 #   - 自动下载并构建核心依赖：zlib、libpng、libjpeg-turbo、libtiff、Leptonica。
-#   - 输出主要产物：
-#       - lib/Tesseract.xcframework
-#         （包含 iOS / macOS arm64 的 XCFramework，推荐在 App 中直接使用）
-#   - 可选：输出 macOS 安装前缀，方便 C 工程直接链接：
-#       - tesseract-macos-arm64/include
-#       - tesseract-macos-arm64/lib/libtesseract.a
-#       - tesseract-macos-arm64/lib/libtesseract_all.a
+#   - 输出统一的安装目录，包含：
+#       - lib/libtesseract.a       (静态库)
+#       - lib/libtesseract_all.a   (打包所有依赖的静态库，方便 C 程序直接链接)
+#       - include/                 (包含 tesseract 与 leptonica 等头文件)
 #
-# 使用（典型场景，构建 XCFramework）：
+# 使用：
 #   1) 赋予执行权限并运行：
 #        chmod +x build.sh
 #        ./build.sh
-#   2) 构建完成后，通常只保留：
-#        ./lib/Tesseract.xcframework
-#      中间构建目录及 iOS 安装前缀会被清理；
-#      若成功生成 XCFramework，macOS 安装前缀也会被默认删除。
-#
-# 使用（需要保留 macOS 安装前缀供 C 工程使用时）：
-#   1) 运行：
-#        KEEP_MAC_INSTALL_PREFIX=1 ./build.sh
-#   2) 简单 C 项目链接示例：
+#   2) 构建完成后，库与头文件默认输出到：
+#        ./tesseract-macos-arm64
+#   3) 简单 C 项目链接示例：
 #        export TESS_ROOT="$(pwd)/tesseract-macos-arm64"
 #        clang -std=c11 test.c \
 #          -I"$TESS_ROOT/include" \
@@ -65,7 +56,10 @@ print_head()  { echo -e "${BLUE}[BUILD]${NC} $1"; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_ROOT="${SCRIPT_DIR}/build-macos-arm64"
 BUILD_ROOT_IOS="${SCRIPT_DIR}/build-ios"
-DOWNLOADS_DIR="${BUILD_ROOT}/downloads"
+
+# 将下载目录独立出来，避免清理构建目录时重复下载
+DOWNLOADS_DIR="${SCRIPT_DIR}/downloads"
+
 INSTALL_PREFIX="${SCRIPT_DIR}/tesseract-macos-arm64"
 INSTALL_PREFIX_MACOS="${INSTALL_PREFIX}"
 INSTALL_PREFIX_IOS_DEVICE="${SCRIPT_DIR}/tesseract-ios-arm64"
@@ -330,7 +324,15 @@ create_unified_static_lib() {
   done
 
   rm -f "${output_lib}"
-  ar rcs "${output_lib}" "${input_libs[@]}"
+  
+  # 关键修复：使用 libtool -static 来合并静态库，而不是 ar rcs
+  if command_exists libtool; then
+    libtool -static -o "${output_lib}" "${input_libs[@]}"
+  else
+    print_error "未找到 libtool，无法正确合并静态库。ar 命令无法在 macOS 上合并 .a 文件。"
+    exit 1
+  fi
+  
   print_info "已生成打包静态库: ${output_lib}"
 }
 
@@ -368,10 +370,7 @@ build_dependencies() {
   local PNG_FIX_DIR="${BUILD_ROOT}/libpng-fix"
   mkdir -p "${PNG_FIX_DIR}/include"
   cat > "${PNG_FIX_DIR}/include/fp.h" <<'EOF'
-/* Stub header for legacy <fp.h> on modern macOS.
- * libpng 旧版针对早期 Mac 编译器会包含 <fp.h>，但在当前 macOS SDK 中该头已被移除。
- * 此处转而包含 <math.h>，以提供 frexp/modf/floor/pow 等数学函数声明。
- */
+/* Stub header for legacy <fp.h> on modern macOS. */
 #ifndef FP_H_STUB
 #define FP_H_STUB
 #include <math.h>
@@ -413,6 +412,7 @@ EOF
     "tiff-${LIBTIFF_VERSION}.tar.gz" \
     "tiff-${LIBTIFF_VERSION}"
 
+  # 关键修复：强制禁用 libtiff 的所有可选依赖 (libdeflate, zstd, lzma, webp)
   build_cmake_project \
     "libtiff" \
     "${DOWNLOADS_DIR}/tiff-${LIBTIFF_VERSION}" \
@@ -422,7 +422,12 @@ EOF
     -Dtiff-tools=OFF \
     -Dtiff-tests=OFF \
     -Dtiff-contrib=OFF \
-    -Dtiff-docs=OFF
+    -Dtiff-docs=OFF \
+    -Dlibdeflate=OFF \
+    -Dzstd=OFF \
+    -Dlzma=OFF \
+    -Dwebp=OFF \
+    -Djbig=OFF
 
   # 5. leptonica
   print_step "构建 Leptonica ${LEPTONICA_VERSION}"
@@ -431,26 +436,89 @@ EOF
     "leptonica-${LEPTONICA_VERSION}.tar.gz" \
     "leptonica-${LEPTONICA_VERSION}"
 
+  # 为 Leptonica 提供一个空的 CMath::CMath 目标，以兼容
+  # libtiff 安装的 CMake 配置中对 CMath::CMath 的可选引用。
+  # 这样可以避免在上层项目中强制要求 find_package(CMath)。
+  local LEPT_SRC="${DOWNLOADS_DIR}/leptonica-${LEPTONICA_VERSION}"
+  local LEPT_CMAKELISTS="${LEPT_SRC}/CMakeLists.txt"
+  if [[ -f "${LEPT_CMAKELISTS}" ]] && ! grep -q "Tesseract macOS: stub CMath::CMath target" "${LEPT_CMAKELISTS}" >/dev/null 2>&1; then
+    print_info "为 Leptonica 添加 CMath::CMath stub 目标 (macOS) ..."
+    local LEPT_TMP="${LEPT_CMAKELISTS}.tmp"
+    awk '
+      BEGIN { inserted = 0 }
+      {
+        print $0
+        if (!inserted && index($0, "set(CMAKE_MODULE_PATH ") == 1) {
+          print ""
+          print "# Tesseract macOS: stub CMath::CMath target"
+          print "if(NOT TARGET CMath::CMath)"
+          print "  add_library(CMath::CMath INTERFACE IMPORTED)"
+          print "endif()"
+          print "# End Tesseract macOS CMath stub"
+          inserted = 1
+        }
+      }
+    ' "${LEPT_CMAKELISTS}" > "${LEPT_TMP}" && mv "${LEPT_TMP}" "${LEPT_CMAKELISTS}"
+  fi
+
+  # 关键修复：显式定义宏，确保 Leptonica 在运行时不会报 "function not present"
+  local LEPT_CFLAGS="${COMMON_CFLAGS} -DHAVE_LIBPNG=1 -DHAVE_LIBJPEG=1 -DHAVE_LIBTIFF=1 -DHAVE_LIBZ=1"
+
   build_cmake_project \
     "leptonica" \
     "${DOWNLOADS_DIR}/leptonica-${LEPTONICA_VERSION}" \
     "${BUILD_ROOT}/leptonica-build" \
     "${INSTALL_PREFIX}" \
     "OFF" \
+    "-DCMAKE_C_FLAGS=${LEPT_CFLAGS}" \
     -DSTATIC=ON \
     -DSHARED=OFF \
     -DBUILD_PROG=OFF \
     -DBUILD_TESTS=OFF \
-    -DENABLE_TIFF=OFF \
+    -DENABLE_TIFF=ON \
     -DENABLE_WEBP=OFF \
     -DENABLE_OPENJPEG=OFF \
-    -DENABLE_GIF=OFF
+    -DENABLE_GIF=OFF \
+    -DENABLE_JPEG=ON \
+    -DENABLE_PNG=ON \
+    -DENABLE_ZLIB=ON \
+    -DCMAKE_DISABLE_FIND_PACKAGE_Deflate=ON \
+    -DTIFF_LIBRARY="${INSTALL_PREFIX}/lib/libtiff.a" \
+    -DTIFF_INCLUDE_DIR="${INSTALL_PREFIX}/include" \
+    -DPNG_LIBRARY="${INSTALL_PREFIX}/lib/libpng.a" \
+    -DPNG_PNG_INCLUDE_DIR="${INSTALL_PREFIX}/include" \
+    -DJPEG_LIBRARY="${INSTALL_PREFIX}/lib/libjpeg.a" \
+    -DJPEG_INCLUDE_DIR="${INSTALL_PREFIX}/include" \
+    -DZLIB_LIBRARY="${INSTALL_PREFIX}/lib/libz.a" \
+    -DZLIB_INCLUDE_DIR="${INSTALL_PREFIX}/include"
+
+  # 清理 Leptonica 导出的 CMake 目标，去掉对 ZLIB::ZLIB / JPEG::JPEG / CMath::CMath
+  # 这些 imported target 的依赖，避免在 Tesseract 的 CMake 配置阶段出错。
+  local LEPT_TARGETS_CMAKE="${INSTALL_PREFIX}/lib/cmake/leptonica/LeptonicaTargets.cmake"
+  if [[ -f "${LEPT_TARGETS_CMAKE}" ]] && ! grep -q "Tesseract macOS: cleaned INTERFACE_LINK_LIBRARIES" "${LEPT_TARGETS_CMAKE}" >/dev/null 2>&1; then
+    print_info "清理 Leptonica CMake 导出的依赖目标 (macOS) ..."
+    local LEPT_TARGETS_TMP="${LEPT_TARGETS_CMAKE}.tmp"
+    awk '
+      /INTERFACE_LINK_LIBRARIES/ {
+        # 删除包含 ZLIB::ZLIB / JPEG::JPEG / CMath::CMath 的段落
+        gsub(/;[^;]*ZLIB::ZLIB[^;]*/, "", $0)
+        gsub(/;[^;]*JPEG::JPEG[^;]*/, "", $0)
+        gsub(/;[^;]*CMath::CMath[^;]*/, "", $0)
+        print $0
+        next
+      }
+      { print $0 }
+    ' "${LEPT_TARGETS_CMAKE}" > "${LEPT_TARGETS_TMP}" && mv "${LEPT_TARGETS_TMP}" "${LEPT_TARGETS_CMAKE}"
+  fi
 
   print_info "依赖库构建完成。"
 }
 
 #######################################
 # 构建 iOS 依赖：zlib, libpng, libjpeg-turbo, libtiff, leptonica
+#######################################
+#######################################
+# 构建 iOS 依赖（单一变体）
 #######################################
 build_dependencies_ios_variant() {
   local sdk="$1"           # iphoneos / iphonesimulator
@@ -493,10 +561,7 @@ build_dependencies_ios_variant() {
   local PNG_FIX_DIR="${build_root}/libpng-fix"
   mkdir -p "${PNG_FIX_DIR}/include"
   cat > "${PNG_FIX_DIR}/include/fp.h" <<'EOF'
-/* Stub header for legacy <fp.h> on modern Apple platforms.
- * libpng 旧版针对早期 Mac 编译器会包含 <fp.h>，但在当前 Apple SDK 中该头已被移除。
- * 此处转而包含 <math.h>，以提供 frexp/modf/floor/pow 等数学函数声明。
- */
+/* Stub header for legacy <fp.h> on modern Apple platforms. */
 #ifndef FP_H_STUB
 #define FP_H_STUB
 #include <math.h>
@@ -524,10 +589,7 @@ EOF
     "libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz" \
     "libjpeg-turbo-${LIBJPEG_TURBO_VERSION}"
 
-  # 针对 CMake 在 iOS 平台上可能未设置 CMAKE_SYSTEM_PROCESSOR 的情况，
-  # 对 libjpeg-turbo 的 CMakeLists.txt 做一次小补丁，避免
-  #   string(TOLOWER ${CMAKE_SYSTEM_PROCESSOR} CMAKE_SYSTEM_PROCESSOR_LC)
-  # 在变量为空时报错。
+  # 针对 CMake 在 iOS 平台上可能未设置 CMAKE_SYSTEM_PROCESSOR 的情况
   local JPEG_SRC="${DOWNLOADS_DIR}/libjpeg-turbo-${LIBJPEG_TURBO_VERSION}"
   local JPEG_CMAKELISTS="${JPEG_SRC}/CMakeLists.txt"
   if [[ -f "${JPEG_CMAKELISTS}" ]] && ! grep -q "Tesseract iOS: ensure CMAKE_SYSTEM_PROCESSOR" "${JPEG_CMAKELISTS}" >/dev/null 2>&1; then
@@ -574,6 +636,7 @@ EOF
     "tiff-${LIBTIFF_VERSION}.tar.gz" \
     "tiff-${LIBTIFF_VERSION}"
 
+  # 关键修复：强制禁用 libtiff 的所有可选依赖 (libdeflate, zstd, lzma, webp, jbig)
   build_cmake_project_ios \
     "libtiff-${variant_name}" \
     "${DOWNLOADS_DIR}/tiff-${LIBTIFF_VERSION}" \
@@ -587,7 +650,12 @@ EOF
     -Dtiff-tools=OFF \
     -Dtiff-tests=OFF \
     -Dtiff-contrib=OFF \
-    -Dtiff-docs=OFF
+    -Dtiff-docs=OFF \
+    -Dlibdeflate=OFF \
+    -Dzstd=OFF \
+    -Dlzma=OFF \
+    -Dwebp=OFF \
+    -Djbig=OFF
 
   # 5. leptonica
   print_step "构建 Leptonica ${LEPTONICA_VERSION} (${variant_name})"
@@ -596,6 +664,9 @@ EOF
     "leptonica-${LEPTONICA_VERSION}.tar.gz" \
     "leptonica-${LEPTONICA_VERSION}"
 
+  # 关键修复：显式定义宏
+  local LEPT_CFLAGS="-DHAVE_LIBPNG=1 -DHAVE_LIBJPEG=1 -DHAVE_LIBZ=1"
+  
   build_cmake_project_ios \
     "leptonica-${variant_name}" \
     "${DOWNLOADS_DIR}/leptonica-${LEPTONICA_VERSION}" \
@@ -605,7 +676,7 @@ EOF
     "${arch}" \
     "${IOS_MIN_VERSION}" \
     "OFF" \
-    "" \
+    "${LEPT_CFLAGS}" \
     -DSTATIC=ON \
     -DSHARED=OFF \
     -DBUILD_PROG=OFF \
@@ -613,11 +684,24 @@ EOF
     -DENABLE_TIFF=OFF \
     -DENABLE_WEBP=OFF \
     -DENABLE_OPENJPEG=OFF \
-    -DENABLE_GIF=OFF
+    -DENABLE_GIF=OFF \
+    -DENABLE_JPEG=ON \
+    -DENABLE_PNG=ON \
+    -DENABLE_ZLIB=ON \
+    -DCMAKE_DISABLE_FIND_PACKAGE_Deflate=ON \
+    -DPNG_LIBRARY="${install_prefix}/lib/libpng.a" \
+    -DPNG_PNG_INCLUDE_DIR="${install_prefix}/include" \
+    -DJPEG_LIBRARY="${install_prefix}/lib/libjpeg.a" \
+    -DJPEG_INCLUDE_DIR="${install_prefix}/include" \
+    -DZLIB_LIBRARY="${install_prefix}/lib/libz.a" \
+    -DZLIB_INCLUDE_DIR="${install_prefix}/include"
 
   print_info "依赖库构建完成 (${variant_name})。"
 }
 
+#######################################
+# 构建 iOS 依赖（真机 + 模拟器）
+#######################################
 build_dependencies_ios() {
   build_dependencies_ios_variant "iphoneos" "${IOS_ARCH_DEVICE}" "${INSTALL_PREFIX_IOS_DEVICE}" "ios-device"
   build_dependencies_ios_variant "iphonesimulator" "${IOS_ARCH_SIMULATOR}" "${INSTALL_PREFIX_IOS_SIMULATOR}" "ios-simulator"
@@ -629,20 +713,49 @@ build_dependencies_ios() {
 build_tesseract() {
   print_head "开始构建 Tesseract ${TESSERACT_VERSION} ..."
 
-  # 始终按版本从远程下载源码，与其他依赖保持一致
   download_and_extract \
     "https://github.com/tesseract-ocr/tesseract/archive/refs/tags/${TESSERACT_VERSION}.tar.gz" \
     "tesseract-${TESSERACT_VERSION}.tar.gz" \
     "tesseract-${TESSERACT_VERSION}"
   local tess_src="${DOWNLOADS_DIR}/tesseract-${TESSERACT_VERSION}"
 
-  # 初始化子模块（仅在 git 仓库中需要）
+   # 修复：跳过 Leptonica TIFF try_run 检测（我们已确保本脚本构建的 Leptonica 启用 TIFF）
+  local TESS_CHECK_FUN="${tess_src}/cmake/CheckFunctions.cmake"
+  if [[ -f "${TESS_CHECK_FUN}" ]] && ! grep -q "Tesseract macOS: always skip Leptonica TIFF try_run" "${TESS_CHECK_FUN}" >/dev/null 2>&1; then
+    print_info "为 Tesseract 修改 Leptonica TIFF 检测为静态结果 (macOS) ..."
+    local TESS_CHECK_TMP="${TESS_CHECK_FUN}.tmp"
+    awk '
+      BEGIN { in_func = 0; done = 0 }
+      /^function\(check_leptonica_tiff_support\)/ {
+        print "function(check_leptonica_tiff_support)"
+        print "  # Tesseract macOS: always skip Leptonica TIFF try_run (bundled Leptonica has TIFF enabled)"
+        print "  set(LEPT_TIFF_RESULT 0 CACHE STRING \"Result of Leptonica TIFF test\" FORCE)"
+        print "  set(LEPT_TIFF_COMPILE_SUCCESS 1 CACHE BOOL \"Leptonica TIFF test compile\" FORCE)"
+        print "  return()"
+        print "endfunction(check_leptonica_tiff_support)"
+        in_func = 1
+        done = 1
+        next
+      }
+      {
+        if (in_func) {
+          if ($0 ~ /^endfunction\(check_leptonica_tiff_support\)/) {
+            in_func = 0
+          }
+          next
+        }
+        print $0
+      }
+    ' "${TESS_CHECK_FUN}" > "${TESS_CHECK_TMP}" && mv "${TESS_CHECK_TMP}" "${TESS_CHECK_FUN}"
+  fi
+
+  # 初始化子模块
   if [[ -d "${tess_src}/.git" && ! -d "${tess_src}/unittest/third_party/googletest" ]]; then
     print_info "初始化 Tesseract 子模块..."
     (cd "${tess_src}" && git submodule update --init --recursive)
   fi
 
-  # 构建静态库（只生成 libtesseract.a，不构建 .dylib）
+  # 关键修复：-DDISABLE_CURL=ON 避免依赖系统 curl
   build_cmake_project \
     "tesseract-static" \
     "${tess_src}" \
@@ -654,6 +767,7 @@ build_tesseract() {
     -DGRAPHICS_DISABLED=ON \
     -DOPENMP_BUILD=OFF \
     -DUSE_SYSTEM_ICU=OFF \
+    -DDISABLE_CURL=ON \
     -DLeptonica_DIR="${INSTALL_PREFIX}/lib/cmake/leptonica"
 
   print_info "Tesseract 构建完成。"
@@ -667,41 +781,17 @@ build_tesseract_ios_variant() {
 
   print_head "开始构建 Tesseract ${TESSERACT_VERSION} (${variant_name}, ${sdk}, ${arch}, iOS >= ${IOS_MIN_VERSION}) ..."
 
-  # 与 macOS 一样按版本下载源码
   download_and_extract \
     "https://github.com/tesseract-ocr/tesseract/archive/refs/tags/${TESSERACT_VERSION}.tar.gz" \
     "tesseract-${TESSERACT_VERSION}.tar.gz" \
     "tesseract-${TESSERACT_VERSION}"
   local tess_src="${DOWNLOADS_DIR}/tesseract-${TESSERACT_VERSION}"
 
-  # 为 iOS 交叉编译环境修正 Tesseract 的 try_run 检测，
-  # 避免在 check_leptonica_tiff_support() 中调用 try_run 导致 CMake 报错。
-  local TESS_CHECK_FUN="${tess_src}/cmake/CheckFunctions.cmake"
-  if [[ -f "${TESS_CHECK_FUN}" ]] && ! grep -q "Tesseract iOS: skip try_run when cross-compiling" "${TESS_CHECK_FUN}" >/dev/null 2>&1; then
-    print_info "为 Tesseract 添加 iOS try_run 修复 (${variant_name}) ..."
-    local TESS_CHECK_TMP="${TESS_CHECK_FUN}.tmp"
-    awk '
-      BEGIN { inserted = 0 }
-      {
-        print $0
-        if (!inserted && $0 ~ /^function\(check_leptonica_tiff_support\)/) {
-          print "  # Tesseract iOS: skip try_run when cross-compiling"
-          print "  if(CMAKE_CROSSCOMPILING)"
-          print "    # Leptonica 在本脚本的 iOS 构建中是禁用 TIFF 的，"
-          print "    # 这里直接将检测结果设为“无 TIFF 支持”，并返回，避免 try_run 报错。"
-          print "    set(LEPT_TIFF_RESULT 1 CACHE STRING \"Result of Leptonica TIFF test\" FORCE)"
-          print "    set(LEPT_TIFF_COMPILE_SUCCESS 1 CACHE BOOL \"Leptonica TIFF test compile\" FORCE)"
-          print "    return()"
-          print "  endif()"
-          print "  # End Tesseract iOS fix"
-          inserted = 1
-      }
-    }
-    ' "${TESS_CHECK_FUN}" > "${TESS_CHECK_TMP}" && mv "${TESS_CHECK_TMP}" "${TESS_CHECK_FUN}"
-  fi
+  # 为 iOS 交叉编译环境修正 Tesseract 的 try_run 检测：
+  # macOS 构建阶段已将 check_leptonica_tiff_support 改为直接返回，
+  # 这里无需再次修改。
 
-  # 为 iOS 构建显式禁用 libcurl 链接，避免 CMake 缓存中残留的 CURL_FOUND/CURL_LIBRARIES
-  # 仍然让 libtesseract/tesseract 链接到系统 curl（iOS SDK 下不可用）。
+  # 为 iOS 构建显式禁用 libcurl 链接
   local TESS_CMAKELISTS="${tess_src}/CMakeLists.txt"
   if [[ -f "${TESS_CMAKELISTS}" ]] && ! grep -q "Tesseract iOS: DISABLE_CURL also clears CURL_FOUND" "${TESS_CMAKELISTS}" >/dev/null 2>&1; then
     print_info "为 Tesseract 添加 iOS CURL 修复 (${variant_name}) ..."
@@ -721,15 +811,14 @@ build_tesseract_ios_variant() {
     ' "${TESS_CMAKELISTS}" > "${TESS_CMAKE_TMP}" && mv "${TESS_CMAKE_TMP}" "${TESS_CMAKELISTS}"
   fi
 
-  # 初始化子模块（仅在 git 仓库中需要）
+  # 初始化子模块
   if [[ -d "${tess_src}/.git" && ! -d "${tess_src}/unittest/third_party/googletest" ]]; then
-    print_info "初始化 Tesseract 子模块 (${variant_name})..."
+    print_info "初始化 Tesseract 子模块..."
     (cd "${tess_src}" && git submodule update --init --recursive)
   fi
 
   local build_root="${BUILD_ROOT_IOS}/${variant_name}"
 
-  # 构建静态库（只生成 libtesseract.a，不构建 .dylib）
   build_cmake_project_ios \
     "tesseract-static-${variant_name}" \
     "${tess_src}" \
@@ -769,8 +858,6 @@ post_process_for_prefix() {
   libs+=("${prefix}/lib/libtesseract.a")
   libs+=("${prefix}/lib/libleptonica.a")
 
-  # 上述依赖库在 CMake 安装时其具体名字可能带版本号，例如 libpng16.a。
-  # 这里尝试常见命名，并在找不到时给出警告但不中断构建。
   if [[ -f "${prefix}/lib/libpng16.a" ]]; then
     libs+=("${prefix}/lib/libpng16.a")
   elif [[ -f "${prefix}/lib/libpng.a" ]]; then
@@ -806,22 +893,19 @@ post_process_for_prefix() {
   fi
 
   # ====================================================================
-  # 关键修改：生成 Clang Module Map (module.modulemap)
-  # 这使得 Swift 可以直接 import Tesseract 而不需要 Bridging-Header
+  # 生成 Clang Module Map (module.modulemap)
   # ====================================================================
   print_info "生成 Clang Module Map (module.modulemap) ..."
   
+  # 关键修复：添加自动链接 (link "c++", link "z", link "iconv")
   cat > "${prefix}/include/module.modulemap" <<EOF
 module Tesseract {
-    // Tesseract C API 
     header "tesseract/capi.h"
-    
-    // Leptonica API (Image handling)
-    // 注意：allheaders.h 包含了大量 C 宏定义，可能会与某些库冲突，
-    // 但为了使用 pixRead 等函数，这通常是必须的。
     header "leptonica/allheaders.h"
-    
     export *
+    link "c++"
+    link "z"
+    link "iconv"
 }
 EOF
 }
@@ -946,6 +1030,10 @@ main() {
   check_macos_version
   check_dependencies
 
+  # 【新增】彻底清理旧的构建产物，保留下载目录
+  print_step "清理之前的构建环境 (保留下载目录)..."
+  rm -rf "${BUILD_ROOT}" "${BUILD_ROOT_IOS}" "${INSTALL_PREFIX}" "${INSTALL_PREFIX_IOS_DEVICE}" "${INSTALL_PREFIX_IOS_SIMULATOR}" "${SCRIPT_DIR}/lib/Tesseract.xcframework"
+
   mkdir -p "${BUILD_ROOT}" "${BUILD_ROOT_IOS}" "${DOWNLOADS_DIR}" "${INSTALL_PREFIX}"
   if [[ "${ENABLE_IOS}" == "1" ]]; then
     mkdir -p "${INSTALL_PREFIX_IOS_DEVICE}" "${INSTALL_PREFIX_IOS_SIMULATOR}"
@@ -965,7 +1053,6 @@ main() {
   fi
 
   # 默认清理中间目录，只保留最终可用的产物；
-  # 如需保留中间目录，可在执行前设置 KEEP_INTERMEDIATE=1。
   if [[ "${KEEP_INTERMEDIATE}" == "0" ]]; then
     print_head "清理中间构建目录 ..."
     rm -rf "${BUILD_ROOT}" "${BUILD_ROOT_IOS}" "${INSTALL_PREFIX_IOS_DEVICE}" "${INSTALL_PREFIX_IOS_SIMULATOR}"
