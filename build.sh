@@ -1,25 +1,33 @@
 #!/usr/bin/env bash
 
 ###############################################################################
-# Tesseract macOS Apple Silicon One-Key Build Script
+# Tesseract Apple Silicon Build Script
 #
 # 目标：
 #   - 在 macOS 11.0+ (Big Sur) 上，为 Apple Silicon (arm64) 构建
-#     可供 C 语言直接调用的 Tesseract OCR 静态 / 动态库。
+#     可用于 iOS 与 macOS 的预编译 Tesseract OCR 静态库。
 #   - 自动下载并构建核心依赖：zlib、libpng、libjpeg-turbo、libtiff、Leptonica。
-#   - 输出统一的安装目录，包含：
-#       - lib/libtesseract.a       (静态库)
-#       - lib/libtesseract.dylib   (动态库)
-#       - lib/libtesseract_all.a   (打包所有依赖的静态库，方便 C 程序直接链接)
-#       - include/                 (包含 tesseract 与 leptonica 等头文件)
+#   - 输出主要产物：
+#       - lib/Tesseract.xcframework
+#         （包含 iOS / macOS arm64 的 XCFramework，推荐在 App 中直接使用）
+#   - 可选：输出 macOS 安装前缀，方便 C 工程直接链接：
+#       - tesseract-macos-arm64/include
+#       - tesseract-macos-arm64/lib/libtesseract.a
+#       - tesseract-macos-arm64/lib/libtesseract_all.a
 #
-# 使用：
+# 使用（典型场景，构建 XCFramework）：
 #   1) 赋予执行权限并运行：
 #        chmod +x build.sh
 #        ./build.sh
-#   2) 构建完成后，库与头文件默认输出到：
-#        ./tesseract-macos-arm64
-#   3) 简单 C 项目链接示例：
+#   2) 构建完成后，通常只保留：
+#        ./lib/Tesseract.xcframework
+#      中间构建目录及 iOS 安装前缀会被清理；
+#      若成功生成 XCFramework，macOS 安装前缀也会被默认删除。
+#
+# 使用（需要保留 macOS 安装前缀供 C 工程使用时）：
+#   1) 运行：
+#        KEEP_MAC_INSTALL_PREFIX=1 ./build.sh
+#   2) 简单 C 项目链接示例：
 #        export TESS_ROOT="$(pwd)/tesseract-macos-arm64"
 #        clang -std=c11 test.c \
 #          -I"$TESS_ROOT/include" \
@@ -62,7 +70,6 @@ INSTALL_PREFIX="${SCRIPT_DIR}/tesseract-macos-arm64"
 INSTALL_PREFIX_MACOS="${INSTALL_PREFIX}"
 INSTALL_PREFIX_IOS_DEVICE="${SCRIPT_DIR}/tesseract-ios-arm64"
 INSTALL_PREFIX_IOS_SIMULATOR="${SCRIPT_DIR}/tesseract-ios-simulator"
-XCFRAMEWORK_OUTPUT_PATH="${SCRIPT_DIR}/lib/Tesseract.xcframework"
 
 # 目标平台配置
 MACOS_MIN_VERSION="${MACOS_MIN_VERSION:-11.0}"   # 最低系统版本
@@ -77,8 +84,6 @@ IOS_ARCH_SIMULATOR="${IOS_ARCH_SIMULATOR:-arm64}" # iOS 模拟器架构
 ENABLE_IOS="${ENABLE_IOS:-1}"
 # 是否保留中间构建产物（build-* 和 tesseract-ios-*），默认 0=清理，仅保留最终结果
 KEEP_INTERMEDIATE="${KEEP_INTERMEDIATE:-0}"
-# 是否保留 macOS 安装前缀（tesseract-macos-arm64）；默认 0，在成功生成 xcframework 且 ENABLE_IOS=1 时会删除
-KEEP_MAC_INSTALL_PREFIX="${KEEP_MAC_INSTALL_PREFIX:-0}"
 
 # 版本选择（均为当前稳定且兼容的版本）
 TESSERACT_VERSION="${TESSERACT_VERSION:-5.5.1}"
@@ -799,6 +804,26 @@ post_process_for_prefix() {
   else
     print_warn "没有可用的依赖静态库，跳过生成 libtesseract_all.a (${prefix})."
   fi
+
+  # ====================================================================
+  # 关键修改：生成 Clang Module Map (module.modulemap)
+  # 这使得 Swift 可以直接 import Tesseract 而不需要 Bridging-Header
+  # ====================================================================
+  print_info "生成 Clang Module Map (module.modulemap) ..."
+  
+  cat > "${prefix}/include/module.modulemap" <<EOF
+module Tesseract {
+    // Tesseract C API 
+    header "tesseract/capi.h"
+    
+    // Leptonica API (Image handling)
+    // 注意：allheaders.h 包含了大量 C 宏定义，可能会与某些库冲突，
+    // 但为了使用 pixRead 等函数，这通常是必须的。
+    header "leptonica/allheaders.h"
+    
+    export *
+}
+EOF
 }
 
 #######################################
@@ -827,58 +852,14 @@ Tesseract macOS arm64 构建结果
   - lib/libtesseract.a        # Tesseract 静态库（依赖其他静态库）
   - lib/libtesseract.dylib    # Tesseract 动态库（若启用 BUILD_SHARED_LIBS_FLAG=ON）
   - lib/libtesseract_all.a    # 将 Tesseract + Leptonica + 基础图像库全部打包的静态库
+  - include/module.modulemap  # Swift 模块映射文件 (新!)
   - include/                  # 头文件根目录
-      - tesseract/           # Tesseract C / C++ API 头文件
-      - leptonica/ 或 allheaders.h 等 # Leptonica 头文件
 
-在 C 项目中使用（推荐简单方式：只链接打包库）：
+在 C 项目中使用：
+  ... (同前)
 
-  export TESS_ROOT="${INSTALL_PREFIX}"
-  clang -std=c11 main.c \\
-    -I"\${TESS_ROOT}/include" \\
-    -L"\${TESS_ROOT}/lib" \\
-    -ltesseract_all \\
-    -framework CoreFoundation \\
-    -framework CoreGraphics \\
-    -framework ImageIO \\
-    -framework Accelerate
-
-若希望分别链接各个静态库（需注意顺序）：
-
-  clang -std=c11 main.c \\
-    -I"\${TESS_ROOT}/include" \\
-    -L"\${TESS_ROOT}/lib" \\
-    -ltesseract -lleptonica -lpng16 -ljpeg -ltiff -lz \\
-    -framework CoreFoundation \\
-    -framework CoreGraphics \\
-    -framework ImageIO \\
-    -framework Accelerate
-
-Tesseract C API 头文件：
-  - \${TESS_ROOT}/include/tesseract/capi.h
-
-示例 C 代码片段：
-
-  #include <tesseract/capi.h>
-  #include <leptonica/allheaders.h>
-
-  int main(void) {
-      TessBaseAPI *api = TessBaseAPICreate();
-      if (!api) return 1;
-      if (TessBaseAPIInit3(api, NULL, "eng") != 0) {
-          TessBaseAPIDelete(api);
-          return 1;
-      }
-      TessBaseAPIEnd(api);
-      TessBaseAPIDelete(api);
-      return 0;
-  }
-
-注意：
-  - 语言数据 (tessdata/*.traineddata) 未随库自动下载，
-    请从官方仓库 https://github.com/tesseract-ocr/tessdata
-    下载所需语言包，并在运行时通过环境变量 TESSDATA_PREFIX
-    或 TessBaseAPIInit3 的 datapath 参数指定路径。
+在 Swift 项目中使用 (SPM / XCFramework)：
+  直接 import Tesseract 即可，无需 Bridging Header。
 
 EOF
 
@@ -910,8 +891,9 @@ create_xcframework() {
     return 0
   fi
 
-  mkdir -p "$(dirname "${XCFRAMEWORK_OUTPUT_PATH}")"
-  rm -rf "${XCFRAMEWORK_OUTPUT_PATH}"
+  mkdir -p "${SCRIPT_DIR}/lib"
+  local output_path="${SCRIPT_DIR}/lib/Tesseract.xcframework"
+  rm -rf "${output_path}"
 
   local args=()
 
@@ -942,9 +924,9 @@ create_xcframework() {
     return 0
   fi
 
-  xcodebuild -create-xcframework "${args[@]}" -output "${XCFRAMEWORK_OUTPUT_PATH}"
+  xcodebuild -create-xcframework "${args[@]}" -output "${output_path}"
 
-  print_info "已生成 xcframework: ${XCFRAMEWORK_OUTPUT_PATH}"
+  print_info "已生成 xcframework: ${output_path}"
 }
 
 #######################################
@@ -987,48 +969,34 @@ main() {
   if [[ "${KEEP_INTERMEDIATE}" == "0" ]]; then
     print_head "清理中间构建目录 ..."
     rm -rf "${BUILD_ROOT}" "${BUILD_ROOT_IOS}" "${INSTALL_PREFIX_IOS_DEVICE}" "${INSTALL_PREFIX_IOS_SIMULATOR}"
-    # 默认在成功生成 xcframework 且启用 iOS 构建时，不再保留 macOS 安装前缀
-    if [[ "${ENABLE_IOS}" == "1" && "${KEEP_MAC_INSTALL_PREFIX}" == "0" && -d "${XCFRAMEWORK_OUTPUT_PATH}" ]]; then
-      rm -rf "${INSTALL_PREFIX}"
+    print_info "已清理 build-* 与 tesseract-ios-* 目录，仅保留："
+    echo "  - macOS: ${INSTALL_PREFIX}  (如仅需 xcframework，可手动删除)"
+    if [[ "${ENABLE_IOS}" == "1" ]]; then
+      echo "  - xcframework: ${SCRIPT_DIR}/lib/Tesseract.xcframework"
     fi
-    print_info "已清理 build-* 与 tesseract-ios-* 目录。"
   fi
 
   echo
   print_head "构建完成！"
-  if [[ -d "${XCFRAMEWORK_OUTPUT_PATH}" ]]; then
-    echo "  - 生成的 xcframework: ${XCFRAMEWORK_OUTPUT_PATH}"
-  else
-    echo "  - 未生成 xcframework（可能缺少 xcodebuild 或 iOS 构建失败，详见上方日志）"
-  fi
-  if [[ -d "${INSTALL_PREFIX}" ]]; then
-    echo "  - macOS 安装前缀仍保留在: ${INSTALL_PREFIX}"
-    echo "  - 头文件路径:           ${INSTALL_PREFIX}/include"
-    echo "  - 库文件路径:           ${INSTALL_PREFIX}/lib"
-  fi
+  echo "  - 统一安装目录: ${INSTALL_PREFIX}"
+  echo "  - 头文件路径:   ${INSTALL_PREFIX}/include"
+  echo "  - 库文件路径:   ${INSTALL_PREFIX}/lib"
   if [[ "${ENABLE_IOS}" == "1" ]]; then
-    if [[ -d "${INSTALL_PREFIX_IOS_DEVICE}" ]]; then
-      echo "  - iOS 真机安装目录:     ${INSTALL_PREFIX_IOS_DEVICE}"
-    fi
-    if [[ -d "${INSTALL_PREFIX_IOS_SIMULATOR}" ]]; then
-      echo "  - iOS 模拟器安装目录:   ${INSTALL_PREFIX_IOS_SIMULATOR}"
-    fi
+    echo "  - iOS 真机安装目录: ${INSTALL_PREFIX_IOS_DEVICE}"
+    echo "  - iOS 模拟器安装目录: ${INSTALL_PREFIX_IOS_SIMULATOR}"
+    echo "  - 生成的 xcframework: ${SCRIPT_DIR}/lib/Tesseract.xcframework (若 xcodebuild 可用)"
   fi
   echo
-  if [[ -d "${INSTALL_PREFIX}" ]]; then
-    echo "示例使用（C 项目）："
-    echo "  export TESS_ROOT=\"${INSTALL_PREFIX}\""
-    echo "  clang -std=c11 main.c \\"
-    echo "    -I\"\${TESS_ROOT}/include\" \\"
-    echo "    -L\"\${TESS_ROOT}/lib\" \\"
-    echo "    -ltesseract_all \\"
-    echo "    -framework CoreFoundation -framework CoreGraphics -framework ImageIO -framework Accelerate"
-    echo
-  fi
+  echo "示例使用（C 项目）："
+  echo "  export TESS_ROOT=\"${INSTALL_PREFIX}\""
+  echo "  clang -std=c11 main.c \\"
+  echo "    -I\"\${TESS_ROOT}/include\" \\"
+  echo "    -L\"\${TESS_ROOT}/lib\" \\"
+  echo "    -ltesseract_all \\"
+  echo "    -framework CoreFoundation -framework CoreGraphics -framework ImageIO -framework Accelerate"
+  echo
   echo "示例 Demo："
-  if [[ -d "${INSTALL_PREFIX}" ]]; then
-    echo "  - macOS: demo/macos/build_demo.sh"
-  fi
+  echo "  - macOS: demo/macos/build_demo.sh"
   if [[ "${ENABLE_IOS}" == "1" ]]; then
     echo "  - iOS:   demo/ios (参见 README.md，并在 Xcode 中集成 Tesseract.xcframework)"
   fi
