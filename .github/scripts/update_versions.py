@@ -79,13 +79,10 @@ def update_dependencies_to_binary_release(version: str, repo: str, checksum: str
         # Replace url
         pkg_text = re.sub(
             r'(url:\s*")[^"]+(")',
-            f'\\1{download_url}\\2',
+            f'\\g<1>{download_url}\\g<2>', # 使用 \\g<1> 避免歧义
             pkg_text
         )
-        # OR if it was a local path before, we need to switch path: to url: + checksum:
-        # But standard regex replacement on existing `url:` field is safer if we assume the file structure.
-        # If starting from local path, we'll assume the user commits a template or we do a smarter replace.
-        # For now, let's handle the case where it might be `path:` currently.
+        
         if "path:" in pkg_text and "binaryTarget" in pkg_text:
              # Replace path: "..." with url: "...", checksum: "..."
              pkg_text = re.sub(
@@ -97,7 +94,7 @@ def update_dependencies_to_binary_release(version: str, repo: str, checksum: str
              # Just update checksum if it already exists
              pkg_text = re.sub(
                 r'(checksum:\s*")[^"]+(")',
-                f'\\1{checksum}\\2',
+                f'\\g<1>{checksum}\\g<2>', # 使用 \\g<1> 修复 Invalid group reference 错误
                 pkg_text
              )
         
@@ -109,8 +106,6 @@ def update_dependencies_to_binary_release(version: str, repo: str, checksum: str
     if pod_path.is_file():
         pod_text = pod_path.read_text(encoding="utf-8")
         
-        # Replace s.source = { :git => ... } OR { :http => ... }
-        # We simply replace the whole s.source line with the http version
         new_source = f"s.source           = {{ :http => '{download_url}' }}"
         
         pod_text = re.sub(
