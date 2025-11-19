@@ -2,7 +2,7 @@
 
 Prebuilt [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) libraries for macOS (Apple Silicon) and iOS (device & simulator), delivered as a single XCFramework.
 
-- Chinese docs: [README_cn.md](README_cn.md)
+- 中文文档请查看: [README_cn.md](README_cn.md)
 
 You can consume it in three ways:
 
@@ -61,7 +61,7 @@ How it works: after CI builds a new XCFramework, it updates `Tesseract.podspec`�
 
 ### 3. Manual download
 
-You can also download the latest `Tesseract.xcframework.zip` from the GitHub Releases page, unzip it, and drag `Tesseract.xcframework` directly into your Xcode project, setting it to **Embed & Sign** for your app target.
+You can also download the latest `Tesseract.xcframework.zip` from the [GitHub Releases](https://github.com/lexiaoyao20/tesseract-Apple/releases) page, unzip it, and drag `Tesseract.xcframework` directly into your Xcode project, setting it to **Embed & Sign** for your app target.
 
 ---
 
@@ -72,8 +72,8 @@ This repo only ships the Tesseract engine binaries. It does **not** include lang
 To make OCR work you must:
 
 1. Download the language data you need (for example `eng.traineddata`, `chi_sim.traineddata`) from official sources such as:
-   - `tessdata_fast` (recommended – faster)
-   - `tessdata_best` (higher accuracy, slower)
+   - [tessdata_fast](https://github.com/tesseract-ocr/tessdata_fast) (recommended – faster)
+   - [tessdata_best](https://github.com/tesseract-ocr/tessdata_best) (higher accuracy, slower)
 2. Add those files to your app’s resources (for example, a `tessdata` folder in the app bundle).
 3. Pass the correct `datapath` when initialising the Tesseract API.
 
@@ -100,7 +100,7 @@ This repo uses GitHub Actions (`.github/workflows/auto-build-tesseract.yml`) to 
 
 - **Check**:
   - Runs daily on schedule or via manual dispatch.
-  - Compares the latest numeric tag from `tesseract-ocr/tesseract` with local tags in this repo.
+  - Compares the latest numeric tag from [tesseract-ocr/tesseract](https://github.com/tesseract-ocr/tesseract) with local tags in this repo.
 - **Build** (only if a new upstream version is found and not yet built here):
   - Runs `build.sh` on `macos-latest`.
   - Automatically downloads and builds dependencies: zlib, libpng, libjpeg‑turbo, libtiff, leptonica.
@@ -162,7 +162,7 @@ Additional options (such as minimum deployment targets) are documented in commen
 
 ## 📄 Licensing
 
-- Build scripts and helper code in this repository: Apache License 2.0.
+- Build scripts and helper code in this repository: [Apache License 2.0](./LICENSE).
 - Tesseract OCR and its dependencies (such as Leptonica) are licensed under their respective upstream licenses (commonly Apache 2.0 or similar).
 
 Before shipping commercial products using this library, ensure you comply with the Tesseract and dependency licenses.
