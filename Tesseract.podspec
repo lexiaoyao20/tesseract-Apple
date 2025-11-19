@@ -10,7 +10,7 @@ Prebuilt Tesseract OCR static library packaged as an XCFramework for iOS (device
   s.authors          = { 'Bob' => 'lexiaoyao20@gmail.com' }
 
   # 使用当前仓库作为二进制源，发布时需要打 tag 与 s.version 对应
-  s.source           = { :git => 'https://github.com/lexiaoyao20/tesseract-release.git', :tag => s.version.to_s }
+  s.source           = { :http => 'https://github.com/lexiaoyao20/tesseract-release/releases/download/5.5.1/Tesseract.xcframework.zip' }
 
   s.ios.deployment_target  = '13.0'
   s.macos.deployment_target = '11.0'
