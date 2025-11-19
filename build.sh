@@ -62,6 +62,7 @@ INSTALL_PREFIX="${SCRIPT_DIR}/tesseract-macos-arm64"
 INSTALL_PREFIX_MACOS="${INSTALL_PREFIX}"
 INSTALL_PREFIX_IOS_DEVICE="${SCRIPT_DIR}/tesseract-ios-arm64"
 INSTALL_PREFIX_IOS_SIMULATOR="${SCRIPT_DIR}/tesseract-ios-simulator"
+XCFRAMEWORK_OUTPUT_PATH="${SCRIPT_DIR}/lib/Tesseract.xcframework"
 
 # 目标平台配置
 MACOS_MIN_VERSION="${MACOS_MIN_VERSION:-11.0}"   # 最低系统版本
@@ -76,6 +77,8 @@ IOS_ARCH_SIMULATOR="${IOS_ARCH_SIMULATOR:-arm64}" # iOS 模拟器架构
 ENABLE_IOS="${ENABLE_IOS:-1}"
 # 是否保留中间构建产物（build-* 和 tesseract-ios-*），默认 0=清理，仅保留最终结果
 KEEP_INTERMEDIATE="${KEEP_INTERMEDIATE:-0}"
+# 是否保留 macOS 安装前缀（tesseract-macos-arm64）；默认 0，在成功生成 xcframework 且 ENABLE_IOS=1 时会删除
+KEEP_MAC_INSTALL_PREFIX="${KEEP_MAC_INSTALL_PREFIX:-0}"
 
 # 版本选择（均为当前稳定且兼容的版本）
 TESSERACT_VERSION="${TESSERACT_VERSION:-5.5.1}"
@@ -907,9 +910,8 @@ create_xcframework() {
     return 0
   fi
 
-  mkdir -p "${SCRIPT_DIR}/lib"
-  local output_path="${SCRIPT_DIR}/lib/Tesseract.xcframework"
-  rm -rf "${output_path}"
+  mkdir -p "$(dirname "${XCFRAMEWORK_OUTPUT_PATH}")"
+  rm -rf "${XCFRAMEWORK_OUTPUT_PATH}"
 
   local args=()
 
@@ -940,9 +942,9 @@ create_xcframework() {
     return 0
   fi
 
-  xcodebuild -create-xcframework "${args[@]}" -output "${output_path}"
+  xcodebuild -create-xcframework "${args[@]}" -output "${XCFRAMEWORK_OUTPUT_PATH}"
 
-  print_info "已生成 xcframework: ${output_path}"
+  print_info "已生成 xcframework: ${XCFRAMEWORK_OUTPUT_PATH}"
 }
 
 #######################################
@@ -985,34 +987,48 @@ main() {
   if [[ "${KEEP_INTERMEDIATE}" == "0" ]]; then
     print_head "清理中间构建目录 ..."
     rm -rf "${BUILD_ROOT}" "${BUILD_ROOT_IOS}" "${INSTALL_PREFIX_IOS_DEVICE}" "${INSTALL_PREFIX_IOS_SIMULATOR}"
-    print_info "已清理 build-* 与 tesseract-ios-* 目录，仅保留："
-    echo "  - macOS: ${INSTALL_PREFIX}  (如仅需 xcframework，可手动删除)"
-    if [[ "${ENABLE_IOS}" == "1" ]]; then
-      echo "  - xcframework: ${SCRIPT_DIR}/lib/Tesseract.xcframework"
+    # 默认在成功生成 xcframework 且启用 iOS 构建时，不再保留 macOS 安装前缀
+    if [[ "${ENABLE_IOS}" == "1" && "${KEEP_MAC_INSTALL_PREFIX}" == "0" && -d "${XCFRAMEWORK_OUTPUT_PATH}" ]]; then
+      rm -rf "${INSTALL_PREFIX}"
     fi
+    print_info "已清理 build-* 与 tesseract-ios-* 目录。"
   fi
 
   echo
   print_head "构建完成！"
-  echo "  - 统一安装目录: ${INSTALL_PREFIX}"
-  echo "  - 头文件路径:   ${INSTALL_PREFIX}/include"
-  echo "  - 库文件路径:   ${INSTALL_PREFIX}/lib"
+  if [[ -d "${XCFRAMEWORK_OUTPUT_PATH}" ]]; then
+    echo "  - 生成的 xcframework: ${XCFRAMEWORK_OUTPUT_PATH}"
+  else
+    echo "  - 未生成 xcframework（可能缺少 xcodebuild 或 iOS 构建失败，详见上方日志）"
+  fi
+  if [[ -d "${INSTALL_PREFIX}" ]]; then
+    echo "  - macOS 安装前缀仍保留在: ${INSTALL_PREFIX}"
+    echo "  - 头文件路径:           ${INSTALL_PREFIX}/include"
+    echo "  - 库文件路径:           ${INSTALL_PREFIX}/lib"
+  fi
   if [[ "${ENABLE_IOS}" == "1" ]]; then
-    echo "  - iOS 真机安装目录: ${INSTALL_PREFIX_IOS_DEVICE}"
-    echo "  - iOS 模拟器安装目录: ${INSTALL_PREFIX_IOS_SIMULATOR}"
-    echo "  - 生成的 xcframework: ${SCRIPT_DIR}/lib/Tesseract.xcframework (若 xcodebuild 可用)"
+    if [[ -d "${INSTALL_PREFIX_IOS_DEVICE}" ]]; then
+      echo "  - iOS 真机安装目录:     ${INSTALL_PREFIX_IOS_DEVICE}"
+    fi
+    if [[ -d "${INSTALL_PREFIX_IOS_SIMULATOR}" ]]; then
+      echo "  - iOS 模拟器安装目录:   ${INSTALL_PREFIX_IOS_SIMULATOR}"
+    fi
   fi
   echo
-  echo "示例使用（C 项目）："
-  echo "  export TESS_ROOT=\"${INSTALL_PREFIX}\""
-  echo "  clang -std=c11 main.c \\"
-  echo "    -I\"\${TESS_ROOT}/include\" \\"
-  echo "    -L\"\${TESS_ROOT}/lib\" \\"
-  echo "    -ltesseract_all \\"
-  echo "    -framework CoreFoundation -framework CoreGraphics -framework ImageIO -framework Accelerate"
-  echo
+  if [[ -d "${INSTALL_PREFIX}" ]]; then
+    echo "示例使用（C 项目）："
+    echo "  export TESS_ROOT=\"${INSTALL_PREFIX}\""
+    echo "  clang -std=c11 main.c \\"
+    echo "    -I\"\${TESS_ROOT}/include\" \\"
+    echo "    -L\"\${TESS_ROOT}/lib\" \\"
+    echo "    -ltesseract_all \\"
+    echo "    -framework CoreFoundation -framework CoreGraphics -framework ImageIO -framework Accelerate"
+    echo
+  fi
   echo "示例 Demo："
-  echo "  - macOS: demo/macos/build_demo.sh"
+  if [[ -d "${INSTALL_PREFIX}" ]]; then
+    echo "  - macOS: demo/macos/build_demo.sh"
+  fi
   if [[ "${ENABLE_IOS}" == "1" ]]; then
     echo "  - iOS:   demo/ios (参见 README.md，并在 Xcode 中集成 Tesseract.xcframework)"
   fi

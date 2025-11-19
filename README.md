@@ -1,321 +1,168 @@
-# Tesseract OCR for macOS & iOS (Apple Silicon)
+# Tesseract OCR for Apple Platforms (Build & Release)
 
-Prebuilt [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) libraries and an XCFramework for macOS (Apple Silicon) and iOS, plus minimal C and Objective‑C demos.
+Prebuilt [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) libraries for macOS (Apple Silicon) and iOS (device & simulator), delivered as a single XCFramework.
 
-This repository is intended as a convenient one‑key build and distribution wrapper around upstream Tesseract. It:
+- Chinese docs: [README_cn.md](README_cn.md)
 
-- Downloads and builds Tesseract and its core dependencies for Apple Silicon.
-- Produces a unified installation directory for C projects on macOS.
-- Optionally builds iOS libraries and a reusable `Tesseract.xcframework`.
-- Provides small demos for macOS (C) and iOS (Objective‑C).
-- Packages the XCFramework as a binary target for Swift Package Manager and CocoaPods.
+You can consume it in three ways:
 
-> Note: This repo does **not** modify Tesseract itself; it only contains build scripts, packaging metadata, and prebuilt binaries for convenience. Please review the upstream project and license before shipping products.
+1. **Recommended** – via Swift Package Manager (binary target).
+2. Via CocoaPods as a binary pod.
+3. Manually, by downloading or building `Tesseract.xcframework` yourself.
 
----
-
-## 1. Repository Layout
-
-- `build.sh` – One‑key build script for macOS (arm64) and optional iOS.
-- `tesseract-macos-arm64/` – Unified installation prefix for macOS (headers + libraries).
-- `lib/Tesseract.xcframework` – Prebuilt XCFramework for macOS + iOS (if generated).
-- `demo/macos/` – Minimal macOS C demo:
-  - `build_demo.sh` – Builds the console demo binary `tesseract-demo`.
-  - `main.c` – Prints the Tesseract version via the C API.
-- `demo/ios/` – Minimal iOS integration example:
-  - `TesseractIOSDemo.m` – Objective‑C demo code that calls Tesseract.
-  - `README.md` – Step‑by‑step iOS integration guide.
-- `Package.swift` – Swift Package manifest exposing `Tesseract.xcframework` as a binary target.
-- `Tesseract.podspec` – CocoaPods spec wrapping `Tesseract.xcframework` as a binary pod.
-
-Generated directories such as `build-macos-arm64`, `build-ios`, and intermediate `tesseract-ios-*` folders are created during the build and may be removed automatically depending on configuration.
+> This repo does **not** modify upstream Tesseract. It only contains build scripts, packaging metadata, and prebuilt binaries. Always review the upstream project and licenses before shipping products.
 
 ---
 
-## 2. Requirements
+## Core Features
 
-Build and usage have been tested primarily on recent macOS with Apple Silicon.
-
-- macOS 11.0+ (Big Sur or later).
-- Apple Silicon (arm64) machine.
-- Xcode + Command Line Tools (for `clang`, SDKs, and `xcodebuild`).
-- Common build tooling:
-  - `git`, `curl`
-  - `cmake`, `ninja`
-  - Autotools: `autoconf`, `automake`, `libtool`, `pkg-config`
-
-Most dependencies are downloaded and built automatically by `build.sh`. Ensure the above tools are installed (e.g. via Xcode and package managers such as Homebrew).
+- 🚀 Automated updates: A GitHub Actions workflow checks upstream Tesseract releases daily and on manual trigger. When a new version appears, it automatically builds, packages, and publishes.
+- 📦 XCFramework support: Ships `Tesseract.xcframework` with arm64 slices for iOS and macOS.
+- ⚡️ Binary distribution: Uses GitHub Releases to host the zip artifact, avoiding Git repo bloat and speeding up downloads.
+- 🛠 Package managers: First‑class support for Swift Package Manager (SPM) and CocoaPods.
 
 ---
 
-## 3. Building Tesseract Libraries
+## 📥 Installation
 
-From the repository root:
+### 1. Swift Package Manager (recommended)
 
-```bash
-chmod +x build.sh
-./build.sh
-```
-
-The script will:
-
-- Check your macOS version and required tools.
-- Download and build:
-  - `zlib`
-  - `libpng`
-  - `libjpeg-turbo`
-  - `libtiff`
-  - `Leptonica`
-  - `Tesseract`
-- Install everything into:
-  - `./tesseract-macos-arm64` (macOS headers + static libraries)
-- Optionally build iOS variants and create:
-  - `./lib/Tesseract.xcframework`
-
-### 3.1 Output Layout (macOS)
-
-After a successful build, the primary macOS output is:
-
-```text
-tesseract-macos-arm64/
-  include/          # Tesseract + Leptonica headers
-  lib/
-    libtesseract.a
-    libtesseract_all.a
-    # Other dependency static libraries
-```
-
-Key points:
-
-- `libtesseract.a` – Core Tesseract static library.
-- `libtesseract_all.a` – Convenience static library that bundles Tesseract and major dependencies, intended for direct linking from C projects.
-
-### 3.2 iOS Build and XCFramework
-
-By default, the script attempts to build both macOS and iOS (device + simulator) variants and then generate `lib/Tesseract.xcframework` via `xcodebuild`.
-
-You can control behaviour with environment variables, for example:
-
-```bash
-# Build macOS only (skip iOS)
-ENABLE_IOS=0 ./build.sh
-
-# Customize minimum deployment targets
-MACOS_MIN_VERSION=12.0 IOS_MIN_VERSION=14.0 ./build.sh
-```
-
-If `xcodebuild` is not available, the XCFramework creation step will be skipped, but the macOS libraries will still be produced.
-
----
-
-## 4. Using Tesseract from C on macOS
-
-Once `./build.sh` has completed:
-
-```bash
-export TESS_ROOT="$(pwd)/tesseract-macos-arm64"
-
-clang -std=c11 main.c \
-  -I"$TESS_ROOT/include" \
-  -L"$TESS_ROOT/lib" \
-  -ltesseract_all \
-  -framework CoreFoundation \
-  -framework CoreGraphics \
-  -framework ImageIO \
-  -framework Accelerate
-```
-
-Where your `main.c` might include the C API header:
-
-```c
-#include <tesseract/capi.h>
-```
-
-You can also use the provided macOS demo as a smoke test (see below).
-
----
-
-## 5. Demos
-
-### 5.1 macOS C Demo
-
-The macOS demo lives in `demo/macos` and simply prints the Tesseract version using the C API.
-
-Steps:
-
-```bash
-# 1) Build libraries and headers
-./build.sh
-
-# 2) Build the demo
-./demo/macos/build_demo.sh
-
-# 3) Run the demo
-./demo/macos/tesseract-demo
-```
-
-You should see the Tesseract version and a confirmation message if linking succeeded.
-
-### 5.2 iOS Objective‑C Demo
-
-The iOS example in `demo/ios` shows how to integrate `Tesseract.xcframework` into an iOS 13+ app using Objective‑C.
-
-High‑level steps (see `demo/ios/README.md` for details):
-
-1. Run `./build.sh` to generate `Tesseract.xcframework` in the repo root.
-2. Create a new iOS App project in Xcode (iOS 13+).
-3. Drag `Tesseract.xcframework` into the Xcode project navigator:
-   - Check “Copy items if needed”.
-   - Add it to your app target.
-4. In your target’s **General → Frameworks, Libraries, and Embedded Content**, set `Tesseract.xcframework` to **Embed & Sign**.
-5. Add `TesseractIOSDemo.m` to your project and call the demo function:
-
-   ```objc
-   #import "TesseractIOSDemo.h"
-
-   - (void)viewDidLoad {
-       [super viewDidLoad];
-       RunTesseractDemo();
-   }
-   ```
-
-`RunTesseractDemo()` uses `TessVersion()` to print the current Tesseract version and validate linkage.
-
-> For real OCR usage you also need appropriate `*.traineddata` language files and must configure `TESSDATA_PREFIX` or pass the data path via `TessBaseAPIInit3`. This repository does not bundle language data.
-
----
-
-## 6. Swift Package Manager Integration
-
-This repository includes a `Package.swift` that exposes `Tesseract.xcframework` as a binary target for both iOS and macOS:
-
-- Target name: `Tesseract`
-- Library product: `Tesseract`
-
-To consume it from another project:
-
-1. Push this repository to a Git remote.
-2. Create a Git tag (e.g. `0.1.0`) for the version you want to distribute.
-3. In your Xcode project or `Package.swift`, add the package dependency pointing to that Git URL and version.
-
-Example `Package.swift` snippet in a client project:
+Add this repository as a package dependency in your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://example.com/your/tesseract-release.git", from: "0.1.0")
-],
-targets: [
-    .target(
-        name: "YourApp",
-        dependencies: [
-            .product(name: "Tesseract", package: "tesseract-release")
-        ]
-    )
+    .package(url: "https://github.com/lexiaoyao20/tesseract-Apple.git", from: "5.5.1")
 ]
 ```
 
-Then import and link `Tesseract` as a binary framework in your Swift or Objective‑C code as usual.
+Or in Xcode:
 
----
+1. Choose `File > Add Packages...`.
+2. Enter the repo URL: `https://github.com/lexiaoyao20/tesseract-Apple.git`.
+3. Select the latest version or a specific tag.
 
-## 7. CocoaPods Integration
+How it works: after CI finishes a build, it automatically updates this repo’s `Package.swift` to point the `binaryTarget` at the latest GitHub Release URL and SHA256 `checksum`. Your app only needs to declare the dependency.
 
-The root `Tesseract.podspec` wraps `lib/Tesseract.xcframework` as a binary pod.
+### 2. CocoaPods
 
-To use it in your own projects:
-
-1. Update the following fields in `Tesseract.podspec`:
-   - `s.homepage`
-   - `s.license`
-   - `s.authors`
-   - `s.source` (Git URL and tag)
-2. Push this repository to the Git URL configured in the podspec.
-3. Create a Git tag matching `s.version` (e.g. `0.1.0`).
-4. Validate the spec:
-
-   ```bash
-   pod spec lint Tesseract.podspec
-   ```
-
-5. Push the spec to your private or public specs repo (e.g. `trunk`).
-
-In a consuming project’s `Podfile`:
+In your `Podfile`, using the git source (CocoaPods will read the podspec at the repo root):
 
 ```ruby
-platform :ios, '13.0'
-use_frameworks!
-
-target 'YourApp' do
-  pod 'Tesseract', '~> 0.1'
-end
+pod 'Tesseract', :git => 'https://github.com/lexiaoyao20/tesseract-Apple.git'
 ```
 
-Then run `pod install` and open the generated workspace.
+If you have published this pod into a private Specs repo, you can instead use:
+
+```ruby
+pod 'Tesseract'
+```
+
+How it works: after CI builds a new XCFramework, it updates `Tesseract.podspec`’s `s.source` to point at the GitHub Release HTTP URL, so consumers always download the prebuilt binary zip.
+
+### 3. Manual download
+
+You can also download the latest `Tesseract.xcframework.zip` from the GitHub Releases page, unzip it, and drag `Tesseract.xcframework` directly into your Xcode project, setting it to **Embed & Sign** for your app target.
 
 ---
 
-## 8. Configuration & Environment Variables
+## ⚠️ Tessdata (Language Packs)
 
-`build.sh` supports several environment variables to customize the build:
+This repo only ships the Tesseract engine binaries. It does **not** include language training data (`.traineddata` files).
 
-- `MACOS_MIN_VERSION` – Minimum macOS deployment target (default `11.0`).
-- `ARCH` – Target architecture (default `arm64`).
-- `BUILD_TYPE` – CMake build type, e.g. `Release` (default) or `Debug`.
-- `IOS_MIN_VERSION` – Minimum iOS deployment target (default `13.0`).
-- `IOS_ARCH_DEVICE` – iOS device architecture (default `arm64`).
-- `IOS_ARCH_SIMULATOR` – iOS simulator architecture (default `arm64`).
-- `ENABLE_IOS` – `1` to build iOS libraries and XCFramework (default), `0` to build macOS only.
-- `KEEP_INTERMEDIATE` – `0` to delete intermediate build directories (default), `1` to keep them.
-- `TESSERACT_VERSION`, `LEPTONICA_VERSION`, `ZLIB_VERSION`, `LIBPNG_VERSION`, `LIBTIFF_VERSION`, `LIBJPEG_TURBO_VERSION` – Versions of upstream dependencies to build.
+To make OCR work you must:
 
-Example: build only macOS, keep intermediate artifacts, and use a custom macOS minimum version:
+1. Download the language data you need (for example `eng.traineddata`, `chi_sim.traineddata`) from official sources such as:
+   - `tessdata_fast` (recommended – faster)
+   - `tessdata_best` (higher accuracy, slower)
+2. Add those files to your app’s resources (for example, a `tessdata` folder in the app bundle).
+3. Pass the correct `datapath` when initialising the Tesseract API.
+
+Objective‑C / C++ example:
+
+```objc
+// Assume eng.traineddata is inside the "tessdata" folder in the app bundle
+NSString *datapath = [[NSBundle mainBundle] resourcePath];
+// Or explicitly point to the parent directory that contains "tessdata"
+
+TessBaseAPI *api = TessBaseAPICreate();
+// Initialise with data path and language
+if (TessBaseAPIInit3(api, [datapath UTF8String], "eng") != 0) {
+    NSLog(@"Could not initialize tesseract.");
+    return;
+}
+```
+
+---
+
+## 🏗 Automated Build & Release Pipeline
+
+This repo uses GitHub Actions (`.github/workflows/auto-build-tesseract.yml`) to keep everything up to date:
+
+- **Check**:
+  - Runs daily on schedule or via manual dispatch.
+  - Compares the latest numeric tag from `tesseract-ocr/tesseract` with local tags in this repo.
+- **Build** (only if a new upstream version is found and not yet built here):
+  - Runs `build.sh` on `macos-latest`.
+  - Automatically downloads and builds dependencies: zlib, libpng, libjpeg‑turbo, libtiff, leptonica.
+  - Builds Tesseract for macOS arm64 + iOS arm64 / simulator.
+  - Produces `lib/Tesseract.xcframework`.
+- **Release**:
+  - Zips `lib/Tesseract.xcframework` as `Tesseract.xcframework.zip`.
+  - Uploads it to a new GitHub Release for that version.
+- **Update**:
+  - Computes the SHA256 checksum of the zip.
+  - Updates `Package.swift` (binary target `url` and `checksum`).
+  - Updates `Tesseract.podspec` (`version` and HTTP `source`).
+- **Commit**:
+  - Commits and pushes changes to config files so the repo stays in sync with the latest upstream Tesseract.
+
+As a consumer you normally just depend on a tagged version of this repo via SwiftPM or CocoaPods; CI guarantees that the tag corresponds to a valid prebuilt XCFramework.
+
+---
+
+## 🛠 Manual Build (Advanced)
+
+If you want to build locally (for example to tweak build options), you need a macOS Apple Silicon environment.
+
+Prerequisites:
+
+- Xcode & Command Line Tools
+- `cmake`, `ninja`, `automake`, `autoconf`, `libtool`, `pkg-config`, `wget` or `curl`
+
+### Steps
+
+1. Clone the repo:
+
+   ```bash
+   git clone https://github.com/lexiaoyao20/tesseract-Apple.git
+   cd tesseract-Apple
+   ```
+
+2. Run the build script:
+
+   ```bash
+   chmod +x build.sh
+   ./build.sh
+   ```
+
+Build outputs include:
+
+- `tesseract-macos-arm64/` – macOS static libraries and headers (primarily for internal use and advanced C integrations).
+- `lib/Tesseract.xcframework` – the main artifact recommended for app integration.
+
+You can customise the build via environment variables, for example to build macOS only:
 
 ```bash
-ENABLE_IOS=0 KEEP_INTERMEDIATE=1 MACOS_MIN_VERSION=12.0 ./build.sh
+ENABLE_IOS=0 ./build.sh
 ```
 
----
-
-## 9. Testing & Troubleshooting
-
-- After modifying the build script or dependency versions:
-  - Re‑run `./build.sh`.
-  - Rebuild and run the macOS demo: `./demo/macos/build_demo.sh` then `./demo/macos/tesseract-demo`.
-- For iOS changes:
-  - Regenerate the XCFramework via `./build.sh`.
-  - Re‑run the iOS demo app on a device or simulator following `demo/ios/README.md`.
-
-Common issues:
-
-- **Missing build tools** – Make sure Xcode, Command Line Tools, and utilities like `cmake`, `ninja`, `pkg-config`, and autotools are installed.
-- **XCFramework not generated** – If `xcodebuild` is not available or iOS libraries fail to build, the script will skip XCFramework creation; check the build log for warnings.
-- **Link errors in your app** – Verify that you link against `libtesseract_all.a` on macOS and that the required system frameworks (`CoreFoundation`, `CoreGraphics`, `ImageIO`, `Accelerate`) are included.
+Additional options (such as minimum deployment targets) are documented in comments and env vars at the top of `build.sh`.
 
 ---
 
-## 10. Licensing
+## 📄 Licensing
 
-Tesseract OCR itself is licensed under the Apache License 2.0. This repository only provides build scripts, prebuilt binaries, and packaging metadata around the upstream project.
+- Build scripts and helper code in this repository: Apache License 2.0.
+- Tesseract OCR and its dependencies (such as Leptonica) are licensed under their respective upstream licenses (commonly Apache 2.0 or similar).
 
-- Please review the upstream Tesseract repository and license to ensure your use complies with all terms.
-- The default `Tesseract.podspec` is configured for Apache 2.0 but includes TODO comments; adjust it as needed to match your actual distribution.
-
-If you redistribute the binaries produced by this repository, you are responsible for complying with all upstream licenses (Tesseract, Leptonica, and other dependencies).
-
----
-
-## 11. Contributing
-
-- Keep behaviour backward‑compatible where possible and avoid changing default output paths.
-- Prefer small, focused changes.
-- After any build‑related change, re‑run:
-  - `./build.sh`
-  - `./demo/macos/build_demo.sh`
-  - `./demo/macos/tesseract-demo`
-
-Pull requests should describe:
-
-- Motivation and high‑level changes.
-- Affected platforms (macOS and/or iOS).
-- Manual test steps (commands run, macOS/Xcode versions).
-
+Before shipping commercial products using this library, ensure you comply with the Tesseract and dependency licenses.
