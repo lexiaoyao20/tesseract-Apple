@@ -51,12 +51,6 @@ In your `Podfile`, using the git source (CocoaPods will read the podspec at the 
 pod 'Tesseract', :git => 'https://github.com/lexiaoyao20/tesseract-Apple.git'
 ```
 
-If you have published this pod into a private Specs repo, you can instead use:
-
-```ruby
-pod 'Tesseract'
-```
-
 How it works: after CI builds a new XCFramework, it updates `Tesseract.podspec`’s `s.source` to point at the GitHub Release HTTP URL, so consumers always download the prebuilt binary zip.
 
 ### 3. Manual download
