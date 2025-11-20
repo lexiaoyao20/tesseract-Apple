@@ -16,7 +16,7 @@ Prebuilt Tesseract OCR static library packaged as an XCFramework for iOS (device
   s.macos.deployment_target = '11.0'
 
   # Prebuilt XCFramework contained in the downloaded archive root
-  s.vendored_frameworks = 'Tesseract.xcframework'
+  s.vendored_frameworks = 'lib/Tesseract.xcframework'
 
   # Tesseract 链接依赖
   s.frameworks = %w[CoreFoundation CoreGraphics ImageIO Accelerate]
