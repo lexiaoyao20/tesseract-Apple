@@ -96,7 +96,30 @@ jobs:
           # 调用脚本更新 Package.swift (url/checksum)
           python3 .github/scripts/update_versions.py --checksum "$CHECKSUM"
 
-      # 7. 提交配置文件更新 (Package.swift 等指向新 Release)
+      # 7. 校验 Swift 源码 target 未被错误替换为二进制依赖
+      - name: Validate Package.swift targets
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+import pathlib
+import re
+import sys
+
+pkg = pathlib.Path("Package.swift").read_text(encoding="utf-8")
+swift_target = re.search(r'\.target\s*\(\s*name:\s*"TesseractSwift"[^)]*\)', pkg, re.DOTALL)
+if swift_target is None:
+    sys.exit("TesseractSwift target not found in Package.swift")
+
+block = swift_target.group(0)
+if 'path: "Sources/TesseractSwift"' not in block:
+    sys.exit("TesseractSwift target must use path: Sources/TesseractSwift")
+
+if 'url:' in block or 'checksum:' in block:
+    sys.exit("TesseractSwift target must not include binary url/checksum")
+PY
+
+      # 8. 提交配置文件更新 (Package.swift 等指向新 Release)
       - name: Commit updated config files
         if: steps.check.outputs.exists == 'false'
         run: |
@@ -125,7 +148,7 @@ jobs:
             echo "RELEASE_SHA=$NEW_SHA" >> "$GITHUB_ENV"
           fi
 
-      # 8. 创建 GitHub Release 并上传 Zip 包
+      # 9. 创建 GitHub Release 并上传 Zip 包
       - name: Create GitHub Release
         if: steps.check.outputs.exists == 'false'
         env:
