@@ -23,7 +23,7 @@ let package = Package(
         .binaryTarget(
             name: "Tesseract",
             url: "https://github.com/lexiaoyao20/tesseract-Apple/releases/download/5.5.1/Tesseract.xcframework.zip",
-            checksum: "d66dd118516292a5b2cf3aa5747941a205afc259d090e97ce5cd65f9b4ebcf0c"
+            checksum: "c7857a4b891314f3c67a20763dc50ed37a54f482458e7d67c04debce2025f572"
         ),
         .target(
             name: "TesseractSwift",
