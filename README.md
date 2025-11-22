@@ -1,25 +1,15 @@
 # Tesseract OCR for Apple Platforms (Build & Release)
 
-Prebuilt [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) libraries for macOS (Apple Silicon) and iOS (device & simulator), delivered as a single XCFramework.
+Prebuilt [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) libraries for macOS (Apple Silicon) and iOS (device & simulator), plus a Swift overlay (`TesseractSwift`) and two macOS SwiftUI demos.
 
 - 中文文档请查看: [README_cn.md](README_cn.md)
 
-You can consume it in three ways:
+What's included:
 
-1. **Recommended** – via Swift Package Manager (binary target).
-2. Via CocoaPods as a binary pod.
-3. Manually, by downloading or building `Tesseract.xcframework` yourself.
-
-> This repo does **not** modify upstream Tesseract. It only contains build scripts, packaging metadata, and prebuilt binaries. Always review the upstream project and licenses before shipping products.
-
----
-
-## Core Features
-
-- 🚀 Automated updates: A GitHub Actions workflow checks upstream Tesseract releases daily and on manual trigger. When a new version appears, it automatically builds, packages, and publishes.
-- 📦 XCFramework support: Ships `Tesseract.xcframework` with arm64 slices for iOS and macOS.
-- ⚡️ Binary distribution: Uses GitHub Releases to host the zip artifact, avoiding Git repo bloat and speeding up downloads.
-- 🛠 Package managers: First‑class support for Swift Package Manager (SPM) and CocoaPods.
+- `Package.swift` points to the published `Tesseract.xcframework.zip` (v5.5.1) hosted on GitHub Releases.
+- `Sources/TesseractSwift`: async, memory-safe Swift wrappers that re-export the C API.
+- Demos under `Examples/`: `TesseractSwiftDemo` (overlay showcase) and `OCRTest` (minimal C API wrapper). Each ships `eng.traineddata` under `Resources` for out-of-the-box runs.
+- `build.sh`: local one-key build for macOS + optional iOS, producing `tesseract-macos-arm64/` and `lib/Tesseract.xcframework`.
 
 ---
 
@@ -35,43 +25,34 @@ dependencies: [
 ]
 ```
 
-Or in Xcode:
+Targets can depend on either product:
+
+- `Tesseract` – the binary XCFramework (C API).
+- `TesseractSwift` – the Swift overlay built atop the binary target.
+
+In Xcode:
 
 1. Choose `File > Add Packages...`.
-2. Enter the repo URL: `https://github.com/lexiaoyao20/tesseract-Apple.git`.
-3. Select the latest version or a specific tag.
+2. Enter `https://github.com/lexiaoyao20/tesseract-Apple.git`.
+3. Pick the latest tag.
 
-How it works: after CI finishes a build, it automatically updates this repo’s `Package.swift` to point the `binaryTarget` at the latest GitHub Release URL and SHA256 `checksum`. Your app only needs to declare the dependency.
+### 2. Manual download
 
-### 2. CocoaPods
-
-In your `Podfile`, using the git source (CocoaPods will read the podspec at the repo root):
-
-```ruby
-pod 'Tesseract', :git => 'https://github.com/lexiaoyao20/tesseract-Apple.git'
-```
-
-How it works: after CI builds a new XCFramework, it updates `Tesseract.podspec`’s `s.source` to point at the GitHub Release HTTP URL, so consumers always download the prebuilt binary zip.
-
-### 3. Manual download
-
-You can also download the latest `Tesseract.xcframework.zip` from the [GitHub Releases](https://github.com/lexiaoyao20/tesseract-Apple/releases) page, unzip it, and drag `Tesseract.xcframework` directly into your Xcode project, setting it to **Embed & Sign** for your app target.
+Grab the latest `Tesseract.xcframework.zip` from [GitHub Releases](https://github.com/lexiaoyao20/tesseract-Apple/releases), unzip, and drag `Tesseract.xcframework` into Xcode (set to **Embed & Sign** for app targets).
 
 ---
 
 ## ⚠️ Tessdata (Language Packs)
 
-This repo only ships the Tesseract engine binaries. It does **not** include language training data (`.traineddata` files).
+The repository does **not** bundle language training data beyond the demo `eng.traineddata`. To use other languages:
 
-To make OCR work you must:
-
-1. Download the language data you need (for example `eng.traineddata`, `chi_sim.traineddata`) from official sources such as:
+1. Download `.traineddata` files you need from official sources such as:
    - [tessdata_fast](https://github.com/tesseract-ocr/tessdata_fast) (recommended – faster)
    - [tessdata_best](https://github.com/tesseract-ocr/tessdata_best) (higher accuracy, slower)
-2. Add those files to your app’s resources (for example, a `tessdata` folder in the app bundle).
-3. Pass the correct `datapath` when initialising the Tesseract API.
+2. Add them to your app bundle (for example `Resources/tessdata`).
+3. Point `datapath` to the parent directory when initialising the API.
 
-Objective‑C / C++ example:
+Objective-C / C++ example:
 
 ```objc
 // Assume eng.traineddata is inside the "tessdata" folder in the app bundle
@@ -88,75 +69,63 @@ if (TessBaseAPIInit3(api, [datapath UTF8String], "eng") != 0) {
 
 ---
 
-## 🏗 Automated Build & Release Pipeline
+## 🛠 Manual Build (macOS + optional iOS)
 
-This repo uses GitHub Actions (`.github/workflows/auto-build-tesseract.yml`) to keep everything up to date:
+For custom builds, run the one-key script on Apple Silicon macOS (Xcode required):
 
-- **Check**:
-  - Runs daily on schedule or via manual dispatch.
-  - Compares the latest numeric tag from [tesseract-ocr/tesseract](https://github.com/tesseract-ocr/tesseract) with local tags in this repo.
-- **Build** (only if a new upstream version is found and not yet built here):
-  - Runs `build.sh` on `macos-latest`.
-  - Automatically downloads and builds dependencies: zlib, libpng, libjpeg‑turbo, libtiff, leptonica.
-  - Builds Tesseract for macOS arm64 + iOS arm64 / simulator.
-  - Produces `lib/Tesseract.xcframework`.
-- **Release**:
-  - Zips `lib/Tesseract.xcframework` as `Tesseract.xcframework.zip`.
-  - Uploads it to a new GitHub Release for that version.
-- **Update**:
-  - Computes the SHA256 checksum of the zip.
-  - Updates `Package.swift` (binary target `url` and `checksum`).
-  - Updates `Tesseract.podspec` (`version` and HTTP `source`).
-- **Commit**:
-  - Commits and pushes changes to config files so the repo stays in sync with the latest upstream Tesseract.
+```bash
+chmod +x build.sh
+./build.sh           # macOS + iOS (arm64 + simulator)
+ENABLE_IOS=0 ./build.sh  # macOS only
+```
 
-As a consumer you normally just depend on a tagged version of this repo via SwiftPM or CocoaPods; CI guarantees that the tag corresponds to a valid prebuilt XCFramework.
+Outputs:
+
+- `tesseract-macos-arm64/` – headers and static libs for macOS.
+- `tesseract-ios-arm64/` and `tesseract-ios-simulator/` – intermediate iOS builds (kept if `KEEP_INTERMEDIATE=1`).
+- `lib/Tesseract.xcframework` – XCFramework combining macOS/iOS arm64 slices.
+
+Additional options (deployment targets, versions) are documented at the top of `build.sh`.
 
 ---
 
-## 🛠 Manual Build (Advanced)
+## 🚀 Swift Usage (Overlay Facade)
 
-If you want to build locally (for example to tweak build options), you need a macOS Apple Silicon environment.
+High-level async facade with optional logging:
 
-Prerequisites:
+```swift
+import TesseractSwift
 
-- Xcode & Command Line Tools
-- `cmake`, `ninja`, `automake`, `autoconf`, `libtool`, `pkg-config`, `wget` or `curl`
+// Enable verbose logs (on by default in DEBUG)
+TesseractSwiftLog.isEnabled = true
 
-### Steps
+// Single image
+let result = try await TesseractSwiftClient.recognize(url: imageURL)
+print(result.text)
 
-1. Clone the repo:
-
-   ```bash
-   git clone https://github.com/lexiaoyao20/tesseract-Apple.git
-   cd tesseract-Apple
-   ```
-
-2. Run the build script:
-
-   ```bash
-   chmod +x build.sh
-   ./build.sh
-   ```
-
-Build outputs include:
-
-- `tesseract-macos-arm64/` – macOS static libraries and headers (primarily for internal use and advanced C integrations).
-- `lib/Tesseract.xcframework` – the main artifact recommended for app integration.
-
-You can customise the build via environment variables, for example to build macOS only:
-
-```bash
-ENABLE_IOS=0 ./build.sh
+// Batch with progress
+let cfg = OCRConfig(language: "eng", pageSegmentation: .singleBlock)
+let results = try await TesseractSwiftClient.recognize(urls: imageURLs, config: cfg) { p in
+    print("item \(p.currentIndex + 1)/\(p.total) \(p.itemProgress)%")
+}
 ```
 
-Additional options (such as minimum deployment targets) are documented in comments and env vars at the top of `build.sh`.
+`OCRConfig` covers language, optional tessdata path, engine/PSM, variables (use `OCRVariable.*`), and a flag to suppress block separators. `OCRResultPayload` returns text plus confidence and the modes used. For lower-level control (HOCR/PDF/iterators), see `SwiftWrapper.md` or use the exported C API directly.
+
+---
+
+## 🧪 Demos
+
+- `Examples/TesseractSwiftDemo`: SwiftPM-driven macOS SwiftUI app showcasing the overlay (progress, custom variables, rendered tokens). Open the `.xcodeproj` and run.
+- `Examples/OCRTest`: minimal macOS SwiftUI sample using `TesseractWrapper` over the C API. Open the `.xcodeproj` and run.
+
+Both include `Resources/eng.traineddata` so they run offline.
 
 ---
 
 ## 📄 Licensing
 
 - Build scripts and helper code in this repository: [Apache License 2.0](./LICENSE).
-- Tesseract OCR and its dependencies (such as Leptonica) are licensed under their respective upstream licenses (commonly Apache 2.0 or similar).
+- Tesseract OCR and its dependencies (such as Leptonica) are licensed under their respective upstream licenses.
 
 Before shipping commercial products using this library, ensure you comply with the Tesseract and dependency licenses.

@@ -54,7 +54,7 @@ jobs:
         run: |
           brew install automake autoconf libtool pkg-config
 
-      # 4. 第一轮更新：更新 Podspec/build.sh/Package.swift 中的显示版本号
+      # 4. 第一轮更新：更新 build.sh/Package.swift 中的显示版本号
       - name: Update versions (Pre-build)
         if: steps.check.outputs.exists == 'false'
         env:
@@ -78,7 +78,6 @@ jobs:
           fi
 
           echo "Zipping artifact..."
-          # 保持目录结构 lib/Tesseract.xcframework 以匹配 Podspec 的 vendored_frameworks 路径
           zip -r Tesseract.xcframework.zip lib/Tesseract.xcframework
 
       # 6. 第二轮更新：计算 Checksum 并将依赖指向刚生成的 Release Zip
@@ -94,10 +93,10 @@ jobs:
           CHECKSUM=$(swift package compute-checksum Tesseract.xcframework.zip)
           echo "Computed checksum: $CHECKSUM"
           
-          # 调用脚本更新 Package.swift (url/checksum) 和 Podspec (http source)
+          # 调用脚本更新 Package.swift (url/checksum)
           python3 .github/scripts/update_versions.py --checksum "$CHECKSUM"
 
-      # 7. 提交配置文件更新 (Package.swift, Podspec 等指向新 Release)
+      # 7. 提交配置文件更新 (Package.swift 等指向新 Release)
       - name: Commit updated config files
         if: steps.check.outputs.exists == 'false'
         run: |
@@ -107,7 +106,6 @@ jobs:
           
           git add build.sh \
                   Package.swift \
-                  Tesseract.podspec \
                   .github/scripts/update_versions.py \
                   .github/workflows/auto-build-tesseract.yml \
                   .gitignore

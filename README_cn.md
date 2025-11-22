@@ -1,23 +1,23 @@
 # Tesseract OCR for Apple Platforms (Build & Release)
 
-本项目提供适用于 macOS（Apple Silicon）和 iOS（真机 & 模拟器）的预编译 [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) 库。
+提供适用于 macOS（Apple Silicon）和 iOS（真机 & 模拟器）的预编译 [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) 库，包含 Swift 封装（`TesseractSwift`）和两个 macOS SwiftUI 示例。
+
+- English version: [README.md](README.md)
+
+仓库内容：
+
+- `Package.swift`：指向 GitHub Releases 上已发布的 `Tesseract.xcframework.zip`（当前 5.5.1）。
+- `Sources/TesseractSwift`：异步、安全的 Swift 封装，重新导出 C API。
+- 示例在 `Examples/`：`TesseractSwiftDemo`（展示封装能力）和 `OCRTest`（最小 C API 包装）。两个示例均在 `Resources` 中内置 `eng.traineddata`。
+- `build.sh`：本地一键构建脚本，生成 `tesseract-macos-arm64/` 和 `lib/Tesseract.xcframework`（可选包含 iOS）。
 
 ---
 
-## 核心特性
-
-- 🚀 自动化：每天定时检测上游 Tesseract Release，发现新版本后自动编译、打包、发布。
-- 📦 XCFramework 支持：提供包含 arm64 架构的 `Tesseract.xcframework`，同时支持 iOS 和 macOS。
-- ⚡️ 二进制分发：通过 GitHub Releases 托管 Zip 产物，避免 Git 仓库体积膨胀，下载更快。
-- 🛠 包管理支持：开箱即用的 Swift Package Manager (SPM) 和 CocoaPods。
-
----
-
-## 📥 安装指南
+## 📥 安装
 
 ### 1. Swift Package Manager（推荐）
 
-在你的 `Package.swift` 中添加依赖：
+在 `Package.swift` 中添加依赖：
 
 ```swift
 dependencies: [
@@ -25,49 +25,37 @@ dependencies: [
 ]
 ```
 
-或者在 Xcode 中：
+目标可选择产品：
 
-1. 选择 `File > Add Packages...`
-2. 输入仓库地址：`https://github.com/lexiaoyao20/tesseract-Apple.git`
-3. 选择最新版本或指定的 Tag。
+- `Tesseract`：XCFramework 二进制（C API）。
+- `TesseractSwift`：基于二进制目标的 Swift 封装。
 
-原理：CI 构建完成后，会自动更新本仓库的 `Package.swift`，填入最新 Release 的下载地址（`url`）和对应的 SHA256 校验值（`checksum`），客户端只需声明依赖即可。
+Xcode 中：`File > Add Packages...`，填入 `https://github.com/lexiaoyao20/tesseract-Apple.git` 并选择最新 Tag。
 
-### 2. CocoaPods
+### 2. 手动下载
 
-在你的 `Podfile` 中添加（使用 git 源，CocoaPods 会自动读取根目录的 podspec）：
-
-```ruby
-pod 'Tesseract', :git => 'https://github.com/lexiaoyao20/tesseract-Apple.git'
-```
-
-原理：CI 构建完成后，会自动更新 `Tesseract.podspec` 的 `s.source` 字段，将其指向 GitHub Release 的 HTTP 下载链接，确保用户拉取到的是预编译好的二进制包。
-
-### 3. 手动下载
-
-你也可以在 [GitHub Releases](https://github.com/lexiaoyao20/tesseract-Apple/releases) 页面下载最新的 `Tesseract.xcframework.zip`，解压后将 `Tesseract.xcframework` 直接拖入你的 Xcode 项目中，并设置为 **Embed & Sign**。
+在 [GitHub Releases](https://github.com/lexiaoyao20/tesseract-Apple/releases) 下载 `Tesseract.xcframework.zip`，解压后将 `Tesseract.xcframework` 拖入 Xcode，App 目标设置为 **Embed & Sign**。
 
 ---
 
-## ⚠️ 关于语言包（Tessdata）
+## ⚠️ 语言包（Tessdata）
 
-本库仅包含 Tesseract 的二进制引擎，不包含语言训练数据（`.traineddata` 文件）。为了让 OCR 正常工作，你需要：
+仓库未额外包含语言训练数据（示例仅带 `eng.traineddata`）。如需其他语言：
 
-1. 从官方仓库下载所需语言数据（例如 `eng.traineddata`、`chi_sim.traineddata`），常用源：
+1. 从官方仓库下载 `.traineddata`，例如：
    - [tessdata_fast](https://github.com/tesseract-ocr/tessdata_fast)（推荐，速度快）
-   - [tessdata_best](https://github.com/tesseract-ocr/tessdata_best)（精度高，速度慢）
-2. 将这些文件放入你的 App 资源目录（例如 Bundle 内的 `tessdata` 文件夹）。
-3. 在初始化 Tesseract API 时，指定 `datapath`。
+   - [tessdata_best](https://github.com/tesseract-ocr/tessdata_best)（精度高）
+2. 放入 App 资源目录（如 `Resources/tessdata`）。
+3. 初始化 API 时将 `datapath` 指向包含 `tessdata` 的父目录。
 
-Objective‑C / C++ 示例：
+Objective-C / C++ 示例：
 
 ```objc
-// 假设你已将 eng.traineddata 放入了 App Bundle 的 "tessdata" 文件夹中
+// 假设 eng.traineddata 位于 App Bundle 的 "tessdata" 目录
 NSString *datapath = [[NSBundle mainBundle] resourcePath];
-// 或者直接指定包含 tessdata 文件夹的父目录路径
+// 或显式指定包含 tessdata 的父目录
 
 TessBaseAPI *api = TessBaseAPICreate();
-// 初始化：指定数据路径和语言
 if (TessBaseAPIInit3(api, [datapath UTF8String], "eng") != 0) {
     NSLog(@"Could not initialize tesseract.");
     return;
@@ -76,67 +64,62 @@ if (TessBaseAPIInit3(api, [datapath UTF8String], "eng") != 0) {
 
 ---
 
-## 🏗 自动化构建流程
+## 🛠 手动构建（macOS + 可选 iOS）
 
-本项目使用 GitHub Actions 实现全自动维护（`.github/workflows/auto-build-tesseract.yml`）：
+在 Apple Silicon macOS 上运行（需 Xcode）：
 
-- **Check**：每天定时运行，或手动触发；脚本比对 [tesseract-ocr/tesseract](https://github.com/tesseract-ocr/tesseract) 的最新 Release Tag 与本仓库已存在的 Tag。
-- **Build**：若发现新版本（且本仓库尚未构建过），在 `macos-latest` 环境下运行 `build.sh`：
-  - 自动下载并编译依赖：zlib、libpng、libjpeg‑turbo、libtiff、leptonica；
-  - 编译 Tesseract（macOS arm64 + iOS arm64 / Simulator）；
-  - 生成 `Tesseract.xcframework`。
-- **Release**：将生成的 `Tesseract.xcframework` 压缩为 Zip，上传到 GitHub Releases。
-- **Update**：
-  - 计算 Zip 包的 SHA256 校验值；
-  - 修改 `Package.swift`：更新 `binaryTarget` 的 `url` 和 `checksum`；
-  - 修改 `Tesseract.podspec`：更新 `version` 和 `source`（HTTP URL）。
-- **Commit**：将上述配置文件的变更提交到仓库，完成版本更新。
+```bash
+chmod +x build.sh
+./build.sh              # 同时构建 macOS + iOS（真机/模拟器）
+ENABLE_IOS=0 ./build.sh # 仅 macOS
+```
+
+输出：
+
+- `tesseract-macos-arm64/`：macOS 头文件和静态库。
+- `tesseract-ios-arm64/`、`tesseract-ios-simulator/`：iOS 中间产物（若 `KEEP_INTERMEDIATE=1` 则保留）。
+- `lib/Tesseract.xcframework`：包含 macOS/iOS arm64 的 XCFramework。
+
+更多可配置项（部署版本、依赖版本）见 `build.sh` 顶部注释与环境变量。
 
 ---
 
-## 🛠 手动构建
+## 🚀 Swift 封装用法
 
-如果你需要自己手动编译（例如修改编译选项），需要在 macOS（Apple Silicon）环境下操作。
+高阶异步接口，带可控日志：
 
-前置要求：
+```swift
+import TesseractSwift
 
-- Xcode & Command Line Tools
-- `cmake`、`ninja`、`automake`、`autoconf`、`libtool`、`pkg-config`、`wget` 或 `curl`
+TesseractSwiftLog.isEnabled = true // DEBUG 默认开启
 
-### 步骤
+// 单图
+let result = try await TesseractSwiftClient.recognize(url: imageURL)
+print(result.text)
 
-1. 克隆仓库：
-
-   ```bash
-   git clone https://github.com/lexiaoyao20/tesseract-Apple.git
-   cd tesseract-Apple
-   ```
-
-2. 运行构建脚本：
-
-   ```bash
-   chmod +x build.sh
-   ./build.sh
-   ```
-
-构建过程中会生成：
-
-- `tesseract-macos-arm64/`（macOS 静态库与头文件，主要用于构建过程和高级用法）
-- `lib/Tesseract.xcframework`（最终推荐使用的产物）
-
-你可以通过环境变量自定义构建，例如只构建 macOS 版本：
-
-```bash
-ENABLE_IOS=0 ./build.sh
+// 批量 + 进度
+let cfg = OCRConfig(language: "eng", pageSegmentation: .singleBlock)
+let results = try await TesseractSwiftClient.recognize(urls: imageURLs, config: cfg) { p in
+    print("item \(p.currentIndex + 1)/\(p.total) \(p.itemProgress)%")
+}
 ```
 
-更多可选参数（如最低系统版本等），可以直接查看 `build.sh` 顶部注释与环境变量说明。
+`OCRConfig` 覆盖语言、可选 tessdata 路径、引擎/PSM、变量（`OCRVariable.*` 常用 Key）、以及是否去除块分隔符。`OCRResultPayload` 返回文本、均值置信度及使用的模式。更底层的 HOCR/PDF/迭代器等能力可参考 `SwiftWrapper.md`，或直接使用导出的 C API。
+
+---
+
+## 🧪 示例
+
+- `Examples/TesseractSwiftDemo`：SwiftPM 驱动的 macOS SwiftUI Demo，展示封装（进度、变量、自定义渲染）。打开 `.xcodeproj` 直接运行。
+- `Examples/OCRTest`：基于 `TesseractWrapper` 的最小 C API 示例，macOS SwiftUI。打开 `.xcodeproj` 直接运行。
+
+两个示例均内置 `Resources/eng.traineddata`，可离线运行。
 
 ---
 
 ## 📄 许可证
 
 - 本仓库中的构建脚本和辅助代码：[Apache License 2.0](./LICENSE)。
-- Tesseract OCR 及依赖库（Leptonica 等）：请遵循其各自的上游许可证（通常为 Apache 2.0 或类似开源协议）。
+- Tesseract OCR 及其依赖（如 Leptonica）：遵循各自上游许可。
 
-在使用本库发布商业产品前，请务必确认已符合 Tesseract 及其依赖的开源许可要求。
+在发布商业产品前，请确认已符合 Tesseract 及依赖的开源许可要求。
