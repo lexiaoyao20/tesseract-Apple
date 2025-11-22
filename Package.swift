@@ -28,7 +28,8 @@ let package = Package(
         .target(
             name: "TesseractSwift",
             dependencies: ["Tesseract"],
-            path: "Sources/TesseractSwift"
+            url: "https://github.com/lexiaoyao20/tesseract-Apple/releases/download/5.5.1/Tesseract.xcframework.zip",
+            checksum: "b4e64a2bc5506389650dda844f69d544ef94e378e2ef26a1ea07745fae1c193a"
         ),
     ]
 )
