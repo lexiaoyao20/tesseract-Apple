@@ -1,5 +1,5 @@
 // swift-tools-version:5.7
-// Upstream Tesseract OCR version: 5.5.1
+// Upstream Tesseract OCR version: 5.5.2
 
 import PackageDescription
 
@@ -22,8 +22,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "Tesseract",
-            url: "https://github.com/lexiaoyao20/tesseract-Apple/releases/download/5.5.1/Tesseract.xcframework.zip",
-            checksum: "c7857a4b891314f3c67a20763dc50ed37a54f482458e7d67c04debce2025f572"
+            url: "https://github.com/lexiaoyao20/tesseract-Apple/releases/download/5.5.2/Tesseract.xcframework.zip",
+            checksum: "869192e6af23919fe67699fa678668de7199e2f6646d427bc92e14b8b005fce8"
         ),
         .target(
             name: "TesseractSwift",
